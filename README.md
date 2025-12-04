@@ -171,7 +171,7 @@ internal/
 
 ## Why "ls-horizons"?
 
-A play on the Unix `ls` command — this tool lets you "list" what's happening at the horizons of our solar system. Also a nod to NASA's New Horizons mission to Pluto and beyond.
+Aside from the obvious play on the Unix `ls` command (this tool lets you "list" what's happening at the horizons of our solar system) I go by litescript in a lot of online spaces. Also a nod to NASA's New Horizons mission to Pluto and beyond.
 
 ## Contributing
 
