@@ -5,25 +5,25 @@ import (
 )
 
 // Realistic DSN XML sample based on actual feed format
+// NOTE: In the real feed, stations and dishes are siblings (not nested).
+// Dishes are associated with stations by inferring complex from the antenna ID.
 const realisticXML = `<?xml version="1.0" encoding="UTF-8"?>
 <dsn>
-  <station name="mdscc" friendlyName="Madrid" timeUTC="1764860575000" timeZoneOffset="3600000">
-    <dish name="DSS55" azimuthAngle="213.5" elevationAngle="18.2" windSpeed="10" isMSPA="false" isArray="false" isDDOR="false" activity="Tracking">
-      <downSignal active="true" signalType="data" dataRate="241900" frequency="8420000000" band="X" power="-120" spacecraft="EMM" spacecraftID="-62"/>
-      <upSignal active="true" signalType="data" dataRate="2000" frequency="7150000000" band="X" power="18" spacecraft="EMM" spacecraftID="-62"/>
-      <target name="EMM" id="62" uplegRange="363000000" downlegRange="363000000" rtlt="2420"/>
-    </dish>
-    <dish name="DSS65" azimuthAngle="45.0" elevationAngle="30.5" windSpeed="5" isMSPA="true" isArray="false" isDDOR="false" activity="Multiple Spacecraft">
-      <downSignal active="true" signalType="data" dataRate="160" frequency="8420000000" band="X" power="-155" spacecraft="VGR1" spacecraftID="-31"/>
-      <target name="VGR1" id="31" uplegRange="24000000000" downlegRange="24000000000" rtlt="160200"/>
-    </dish>
-  </station>
-  <station name="gdscc" friendlyName="Goldstone" timeUTC="1764860575000" timeZoneOffset="-28800000">
-    <dish name="DSS14" azimuthAngle="180.0" elevationAngle="45.0" windSpeed="8" isMSPA="false" isArray="false" isDDOR="false" activity="Science">
-      <downSignal active="true" signalType="data" dataRate="2000000" frequency="8420000000" band="X" power="-100" spacecraft="MARS2020" spacecraftID="-168"/>
-      <target name="MARS2020" id="168" uplegRange="225000000" downlegRange="225000000" rtlt="1500"/>
-    </dish>
-  </station>
+  <station name="mdscc" friendlyName="Madrid" timeUTC="1764860575000" timeZoneOffset="3600000"/>
+  <dish name="DSS55" azimuthAngle="213.5" elevationAngle="18.2" windSpeed="10" isMSPA="false" isArray="false" isDDOR="false" activity="Tracking">
+    <downSignal active="true" signalType="data" dataRate="241900" frequency="8420000000" band="X" power="-120" spacecraft="EMM" spacecraftID="-62"/>
+    <upSignal active="true" signalType="data" dataRate="2000" frequency="7150000000" band="X" power="18" spacecraft="EMM" spacecraftID="-62"/>
+    <target name="EMM" id="62" uplegRange="363000000" downlegRange="363000000" rtlt="2420"/>
+  </dish>
+  <dish name="DSS65" azimuthAngle="45.0" elevationAngle="30.5" windSpeed="5" isMSPA="true" isArray="false" isDDOR="false" activity="Multiple Spacecraft">
+    <downSignal active="true" signalType="data" dataRate="160" frequency="8420000000" band="X" power="-155" spacecraft="VGR1" spacecraftID="-31"/>
+    <target name="VGR1" id="31" uplegRange="24000000000" downlegRange="24000000000" rtlt="160200"/>
+  </dish>
+  <station name="gdscc" friendlyName="Goldstone" timeUTC="1764860575000" timeZoneOffset="-28800000"/>
+  <dish name="DSS14" azimuthAngle="180.0" elevationAngle="45.0" windSpeed="8" isMSPA="false" isArray="false" isDDOR="false" activity="Science">
+    <downSignal active="true" signalType="data" dataRate="2000000" frequency="8420000000" band="X" power="-100" spacecraft="MARS2020" spacecraftID="-168"/>
+    <target name="MARS2020" id="168" uplegRange="225000000" downlegRange="225000000" rtlt="1500"/>
+  </dish>
   <timestamp>1764860575000</timestamp>
 </dsn>`
 

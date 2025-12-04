@@ -10,18 +10,20 @@ import (
 // XML structures matching the DSN feed format
 
 // xmlDSN is the root element of the DSN XML feed.
+// In the actual feed, stations and dishes are siblings (not nested).
+// Dishes belong to the preceding station element.
 type xmlDSN struct {
 	XMLName   xml.Name     `xml:"dsn"`
 	Stations  []xmlStation `xml:"station"`
-	Timestamp string       `xml:"timestamp"` // child element, not attr
+	Dishes    []xmlDish    `xml:"dish"` // siblings of stations at top level
+	Timestamp string       `xml:"timestamp"`
 }
 
 type xmlStation struct {
-	Name         string    `xml:"name,attr"`
-	FriendlyName string    `xml:"friendlyName,attr"`
-	TimeUTC      string    `xml:"timeUTC,attr"`
-	TimeZone     string    `xml:"timeZoneOffset,attr"`
-	Dishes       []xmlDish `xml:"dish"`
+	Name         string `xml:"name,attr"`
+	FriendlyName string `xml:"friendlyName,attr"`
+	TimeUTC      string `xml:"timeUTC,attr"`
+	TimeZone     string `xml:"timeZoneOffset,attr"`
 }
 
 type xmlDish struct {
@@ -82,52 +84,57 @@ func Parse(data []byte) (*DSNData, error) {
 		}
 	}
 
+	// Build station map for dish association
+	stationMap := make(map[Complex]*Station)
 	for _, xmlStn := range raw.Stations {
-		station, links, errs := parseStation(xmlStn)
+		station := parseStationHeader(xmlStn)
+		stationMap[station.Complex] = &station
 		result.Stations = append(result.Stations, station)
+	}
+
+	// Associate dishes with stations by complex (inferred from antenna ID)
+	for _, xmlDish := range raw.Dishes {
+		complex := inferComplex(xmlDish.Name)
+		antenna, links, errs := parseDish(xmlDish, complex, string(complex))
 		result.Links = append(result.Links, links...)
 		result.Errors = append(result.Errors, errs...)
+
+		// Add antenna to corresponding station
+		for i := range result.Stations {
+			if result.Stations[i].Complex == complex {
+				result.Stations[i].Antennas = append(result.Stations[i].Antennas, antenna)
+				break
+			}
+		}
 	}
 
 	return result, nil
 }
 
-func parseStation(xmlStn xmlStation) (Station, []Link, []string) {
-	var errors []string
-
+// parseStationHeader parses station metadata (without dishes, which are siblings).
+func parseStationHeader(xmlStn xmlStation) Station {
 	station := Station{
 		Name:         xmlStn.Name,
 		FriendlyName: xmlStn.FriendlyName,
-		Complex:      inferComplex(xmlStn.Name),
-		Antennas:     make([]Antenna, 0, len(xmlStn.Dishes)),
+		Complex:      Complex(xmlStn.Name), // station name IS the complex ID (gdscc, mdscc, cdscc)
+		Antennas:     make([]Antenna, 0),
 	}
 
 	// Parse time
 	if xmlStn.TimeUTC != "" {
 		if t, err := parseTimestamp(xmlStn.TimeUTC); err == nil {
 			station.TimeUTC = t
-		} else {
-			errors = append(errors, fmt.Sprintf("station %s time: %v", xmlStn.Name, err))
 		}
 	}
 
-	// Parse timezone offset
+	// Parse timezone offset (comes as milliseconds in the feed)
 	if xmlStn.TimeZone != "" {
-		if tz, err := strconv.Atoi(xmlStn.TimeZone); err == nil {
-			station.TimeZone = tz
+		if tz, err := strconv.ParseFloat(xmlStn.TimeZone, 64); err == nil {
+			station.TimeZone = int(tz / 1000) // convert ms to seconds
 		}
 	}
 
-	var links []Link
-
-	for _, xmlDish := range xmlStn.Dishes {
-		antenna, dishLinks, errs := parseDish(xmlDish, station.Complex, xmlStn.Name)
-		station.Antennas = append(station.Antennas, antenna)
-		links = append(links, dishLinks...)
-		errors = append(errors, errs...)
-	}
-
-	return station, links, errors
+	return station
 }
 
 func parseDish(xmlDish xmlDish, complex Complex, stationName string) (Antenna, []Link, []string) {

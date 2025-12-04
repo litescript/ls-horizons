@@ -88,8 +88,26 @@ ls-horizons --refresh 30s
 # Print summary table once
 ls-horizons --summary
 
+# Summary with ASCII mini sky view
+ls-horizons --summary --mini-sky
+
 # Watch mode: refresh every 30 seconds
 ls-horizons --summary --watch 30s
+
+# Single-line "now playing" mode
+ls-horizons --now
+
+# Show card for specific spacecraft
+ls-horizons --sc VGR1
+
+# Show only changes between fetches
+ls-horizons --diff --watch 30s
+
+# Beep on important events (TTY only)
+ls-horizons --summary --watch 30s --beep
+
+# Show event log
+ls-horizons --events
 
 # Export JSON snapshot to file
 ls-horizons --snapshot-path snapshot.json
@@ -104,7 +122,13 @@ ls-horizons --snapshot-path -
 |------|---------|-------------|
 | `--refresh` | `5s` | Data refresh interval (1s - 5m) |
 | `--summary` | `false` | Print text summary instead of TUI |
-| `--watch` | `0` | Repeat output at interval (implies --summary) |
+| `--mini-sky` | `false` | Show ASCII mini sky view |
+| `--now` | `false` | Single-line now-playing mode |
+| `--sc` | `""` | Show card for specific spacecraft |
+| `--diff` | `false` | Show only changes between fetches |
+| `--beep` | `false` | Beep on important events (TTY only) |
+| `--events` | `false` | Show event log |
+| `--watch` | `0` | Repeat output at interval |
 | `--snapshot-path` | `""` | Export JSON to file (`-` for stdout) |
 | `--log-level` | `info` | Log level (debug, info, warn, error) |
 
