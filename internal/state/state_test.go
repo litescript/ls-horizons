@@ -286,3 +286,175 @@ type testError struct {
 func (e *testError) Error() string {
 	return e.msg
 }
+
+func TestManager_EventDetection_NewLink(t *testing.T) {
+	m := NewManager(DefaultConfig())
+
+	// First update with a spacecraft
+	data1 := &dsn.DSNData{
+		Timestamp: time.Now(),
+		Links: []dsn.Link{
+			{SpacecraftID: 1, Spacecraft: "Voyager", StationID: "gdscc", AntennaID: "DSS-14", Complex: dsn.ComplexGoldstone},
+		},
+	}
+	m.Update(data1, 0, nil)
+
+	events := m.RecentEvents(10)
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != EventNewLink {
+		t.Errorf("event type = %q, want NEW_LINK", events[0].Type)
+	}
+	if events[0].Spacecraft != "Voyager" {
+		t.Errorf("spacecraft = %q, want Voyager", events[0].Spacecraft)
+	}
+	if events[0].NewStation != "gdscc" {
+		t.Errorf("new station = %q, want gdscc", events[0].NewStation)
+	}
+}
+
+func TestManager_EventDetection_Handoff(t *testing.T) {
+	m := NewManager(DefaultConfig())
+
+	// Initial link at Goldstone
+	data1 := &dsn.DSNData{
+		Timestamp: time.Now(),
+		Links: []dsn.Link{
+			{SpacecraftID: 1, Spacecraft: "Mars Orbiter", StationID: "gdscc", AntennaID: "DSS-14", Complex: dsn.ComplexGoldstone},
+		},
+	}
+	m.Update(data1, 0, nil)
+
+	// Handoff to Canberra
+	data2 := &dsn.DSNData{
+		Timestamp: time.Now().Add(time.Minute),
+		Links: []dsn.Link{
+			{SpacecraftID: 1, Spacecraft: "Mars Orbiter", StationID: "cdscc", AntennaID: "DSS-34", Complex: dsn.ComplexCanberra},
+		},
+	}
+	m.Update(data2, 0, nil)
+
+	events := m.RecentEvents(10)
+	if len(events) < 2 {
+		t.Fatalf("expected at least 2 events, got %d", len(events))
+	}
+
+	// Find the handoff event
+	var handoff *Event
+	for i := range events {
+		if events[i].Type == EventHandoff {
+			handoff = &events[i]
+			break
+		}
+	}
+
+	if handoff == nil {
+		t.Fatal("no HANDOFF event found")
+	}
+	if handoff.Spacecraft != "Mars Orbiter" {
+		t.Errorf("spacecraft = %q, want Mars Orbiter", handoff.Spacecraft)
+	}
+	if handoff.OldStation != "gdscc" {
+		t.Errorf("old station = %q, want gdscc", handoff.OldStation)
+	}
+	if handoff.NewStation != "cdscc" {
+		t.Errorf("new station = %q, want cdscc", handoff.NewStation)
+	}
+}
+
+func TestManager_EventDetection_LinkLost(t *testing.T) {
+	m := NewManager(DefaultConfig())
+
+	// Initial link
+	data1 := &dsn.DSNData{
+		Timestamp: time.Now(),
+		Links: []dsn.Link{
+			{SpacecraftID: 1, Spacecraft: "TestCraft", StationID: "mdscc", Complex: dsn.ComplexMadrid},
+		},
+	}
+	m.Update(data1, 0, nil)
+
+	// Link lost (no links)
+	data2 := &dsn.DSNData{
+		Timestamp: time.Now().Add(time.Minute),
+		Links:     []dsn.Link{},
+	}
+	m.Update(data2, 0, nil)
+
+	events := m.RecentEvents(10)
+
+	var linkLost *Event
+	for i := range events {
+		if events[i].Type == EventLinkLost {
+			linkLost = &events[i]
+			break
+		}
+	}
+
+	if linkLost == nil {
+		t.Fatal("no LINK_LOST event found")
+	}
+	if linkLost.Spacecraft != "TestCraft" {
+		t.Errorf("spacecraft = %q, want TestCraft", linkLost.Spacecraft)
+	}
+	if linkLost.OldStation != "mdscc" {
+		t.Errorf("old station = %q, want mdscc", linkLost.OldStation)
+	}
+}
+
+func TestManager_EventRingBuffer(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxEvents = 5
+	m := NewManager(cfg)
+
+	// Generate more events than buffer size
+	// Each update removes previous spacecraft (LINK_LOST) and adds new one (NEW_LINK)
+	for i := 0; i < 10; i++ {
+		data := &dsn.DSNData{
+			Timestamp: time.Now().Add(time.Duration(i) * time.Minute),
+			Links: []dsn.Link{
+				{SpacecraftID: i, Spacecraft: "SC" + string(rune('A'+i)), StationID: "gdscc", Complex: dsn.ComplexGoldstone},
+			},
+		}
+		m.Update(data, 0, nil)
+	}
+
+	events := m.RecentEvents(100)
+	if len(events) != 5 {
+		t.Errorf("events count = %d, want 5 (max)", len(events))
+	}
+
+	// Should have recent events (could be NEW_LINK or LINK_LOST)
+	// Verify ring buffer doesn't exceed max
+	if len(events) > cfg.MaxEvents {
+		t.Errorf("events exceeded max: got %d, max %d", len(events), cfg.MaxEvents)
+	}
+
+	// Verify events are ordered chronologically
+	for i := 1; i < len(events); i++ {
+		if events[i].Timestamp.Before(events[i-1].Timestamp) {
+			t.Errorf("events not in chronological order at index %d", i)
+		}
+	}
+}
+
+func TestManager_Snapshot_IncludesEvents(t *testing.T) {
+	m := NewManager(DefaultConfig())
+
+	data := &dsn.DSNData{
+		Timestamp: time.Now(),
+		Links: []dsn.Link{
+			{SpacecraftID: 1, Spacecraft: "Test", StationID: "gdscc", Complex: dsn.ComplexGoldstone},
+		},
+	}
+	m.Update(data, 0, nil)
+
+	snap := m.Snapshot()
+	if len(snap.Events) == 0 {
+		t.Error("Snapshot should include events")
+	}
+	if snap.Events[0].Type != EventNewLink {
+		t.Errorf("event type = %q, want NEW_LINK", snap.Events[0].Type)
+	}
+}

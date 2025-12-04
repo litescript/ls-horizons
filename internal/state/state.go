@@ -8,6 +8,27 @@ import (
 	"github.com/peter/ls-horizons/internal/dsn"
 )
 
+// EventType represents the type of state change event.
+type EventType string
+
+const (
+	EventNewLink     EventType = "NEW_LINK"
+	EventHandoff     EventType = "HANDOFF"
+	EventLinkLost    EventType = "LINK_LOST"
+	EventLinkResumed EventType = "LINK_RESUMED"
+)
+
+// Event represents a state change in the DSN network.
+type Event struct {
+	Type       EventType `json:"type"`
+	Timestamp  time.Time `json:"timestamp"`
+	Spacecraft string    `json:"spacecraft"`
+	OldStation string    `json:"old_station,omitempty"`
+	NewStation string    `json:"new_station,omitempty"`
+	AntennaID  string    `json:"antenna_id,omitempty"`
+	Complex    string    `json:"complex,omitempty"`
+}
+
 // HistoryEntry represents a single point in the history buffer.
 type HistoryEntry struct {
 	Timestamp time.Time
@@ -28,6 +49,12 @@ type TimeSeries struct {
 	Value     float64
 }
 
+// linkKey uniquely identifies a spacecraft link.
+type linkKey struct {
+	spacecraft string
+	stationID  string
+}
+
 // Manager handles all shared application state with thread-safe access.
 type Manager struct {
 	mu sync.RWMutex
@@ -38,11 +65,19 @@ type Manager struct {
 	lastError     error
 	fetchDuration time.Duration
 
+	// Previous links for event detection
+	prevLinks map[linkKey]dsn.Link
+
 	// History buffers
-	history            []HistoryEntry
-	maxHistoryLen      int
-	spacecraftHistory  map[int]*SpacecraftHistory
-	maxSpacecraftHist  int
+	history           []HistoryEntry
+	maxHistoryLen     int
+	spacecraftHistory map[int]*SpacecraftHistory
+	maxSpacecraftHist int
+
+	// Event log (ring buffer)
+	events       []Event
+	maxEvents    int
+	eventWriteAt int
 
 	// Derived/cached data
 	complexLoads map[dsn.Complex]dsn.ComplexLoad
@@ -54,9 +89,10 @@ type Manager struct {
 
 // Config holds configuration for the state manager.
 type Config struct {
-	MaxHistoryLen       int
-	MaxSpacecraftHist   int
-	RefreshInterval     time.Duration
+	MaxHistoryLen     int
+	MaxSpacecraftHist int
+	MaxEvents         int
+	RefreshInterval   time.Duration
 }
 
 // DefaultConfig returns sensible default configuration.
@@ -64,18 +100,26 @@ func DefaultConfig() Config {
 	return Config{
 		MaxHistoryLen:     60,  // Keep ~1 hour at 1 fetch/min
 		MaxSpacecraftHist: 120, // 2 hours of per-spacecraft data
+		MaxEvents:         50,  // Last 50 events
 		RefreshInterval:   5 * time.Second,
 	}
 }
 
 // NewManager creates a new state manager.
 func NewManager(cfg Config) *Manager {
+	maxEvents := cfg.MaxEvents
+	if maxEvents <= 0 {
+		maxEvents = 50
+	}
 	return &Manager{
 		maxHistoryLen:     cfg.MaxHistoryLen,
 		maxSpacecraftHist: cfg.MaxSpacecraftHist,
+		maxEvents:         maxEvents,
+		events:            make([]Event, 0, maxEvents),
 		refreshInterval:   cfg.RefreshInterval,
 		spacecraftHistory: make(map[int]*SpacecraftHistory),
 		complexLoads:      make(map[dsn.Complex]dsn.ComplexLoad),
+		prevLinks:         make(map[linkKey]dsn.Link),
 	}
 }
 
@@ -91,6 +135,9 @@ func (m *Manager) Update(data *dsn.DSNData, fetchDuration time.Duration, err err
 	if data == nil {
 		return
 	}
+
+	// Detect events before updating current state
+	m.detectEvents(data)
 
 	m.current = data
 
@@ -110,6 +157,84 @@ func (m *Manager) Update(data *dsn.DSNData, fetchDuration time.Duration, err err
 
 	// Update per-spacecraft history
 	m.updateSpacecraftHistory(data)
+
+	// Update prevLinks for next comparison
+	m.prevLinks = make(map[linkKey]dsn.Link)
+	for _, link := range data.Links {
+		key := linkKey{spacecraft: link.Spacecraft, stationID: link.StationID}
+		m.prevLinks[key] = link
+	}
+}
+
+// detectEvents compares new data with previous state and generates events.
+func (m *Manager) detectEvents(newData *dsn.DSNData) {
+	now := time.Now()
+
+	// Build current links map
+	newLinks := make(map[linkKey]dsn.Link)
+	newBySpacecraft := make(map[string]dsn.Link)
+	for _, link := range newData.Links {
+		key := linkKey{spacecraft: link.Spacecraft, stationID: link.StationID}
+		newLinks[key] = link
+		newBySpacecraft[link.Spacecraft] = link
+	}
+
+	// Build previous by spacecraft
+	prevBySpacecraft := make(map[string]dsn.Link)
+	for key, link := range m.prevLinks {
+		prevBySpacecraft[key.spacecraft] = link
+	}
+
+	// Check for new links and handoffs
+	for sc, newLink := range newBySpacecraft {
+		prevLink, wasPrev := prevBySpacecraft[sc]
+
+		if !wasPrev {
+			// NEW_LINK: spacecraft wasn't tracked before
+			m.addEvent(Event{
+				Type:       EventNewLink,
+				Timestamp:  now,
+				Spacecraft: sc,
+				NewStation: newLink.StationID,
+				AntennaID:  newLink.AntennaID,
+				Complex:    string(newLink.Complex),
+			})
+		} else if prevLink.StationID != newLink.StationID {
+			// HANDOFF: station changed
+			m.addEvent(Event{
+				Type:       EventHandoff,
+				Timestamp:  now,
+				Spacecraft: sc,
+				OldStation: prevLink.StationID,
+				NewStation: newLink.StationID,
+				AntennaID:  newLink.AntennaID,
+				Complex:    string(newLink.Complex),
+			})
+		}
+	}
+
+	// Check for lost links
+	for sc, prevLink := range prevBySpacecraft {
+		if _, exists := newBySpacecraft[sc]; !exists {
+			m.addEvent(Event{
+				Type:       EventLinkLost,
+				Timestamp:  now,
+				Spacecraft: sc,
+				OldStation: prevLink.StationID,
+				Complex:    string(prevLink.Complex),
+			})
+		}
+	}
+}
+
+// addEvent adds an event to the ring buffer.
+func (m *Manager) addEvent(e Event) {
+	if len(m.events) < m.maxEvents {
+		m.events = append(m.events, e)
+	} else {
+		m.events[m.eventWriteAt] = e
+		m.eventWriteAt = (m.eventWriteAt + 1) % m.maxEvents
+	}
 }
 
 func (m *Manager) updateSpacecraftHistory(data *dsn.DSNData) {
@@ -154,6 +279,7 @@ type Snapshot struct {
 	ComplexLoads  map[dsn.Complex]dsn.ComplexLoad
 	Spacecraft    []dsn.Spacecraft
 	SkyObjects    []dsn.SkyObject
+	Events        []Event
 }
 
 // Snapshot returns a consistent snapshot of current state.
@@ -177,6 +303,9 @@ func (m *Manager) Snapshot() Snapshot {
 		skyObjs = m.current.SkyObjects()
 	}
 
+	// Copy events in chronological order
+	events := m.getEventsOrdered()
+
 	return Snapshot{
 		Data:          m.current,
 		LastFetch:     m.lastFetch,
@@ -185,7 +314,42 @@ func (m *Manager) Snapshot() Snapshot {
 		ComplexLoads:  loads,
 		Spacecraft:    sc,
 		SkyObjects:    skyObjs,
+		Events:        events,
 	}
+}
+
+// getEventsOrdered returns events in chronological order.
+func (m *Manager) getEventsOrdered() []Event {
+	if len(m.events) == 0 {
+		return nil
+	}
+
+	// If buffer isn't full yet, just copy
+	if len(m.events) < m.maxEvents {
+		result := make([]Event, len(m.events))
+		copy(result, m.events)
+		return result
+	}
+
+	// Ring buffer is full, reorder from oldest to newest
+	result := make([]Event, m.maxEvents)
+	for i := 0; i < m.maxEvents; i++ {
+		idx := (m.eventWriteAt + i) % m.maxEvents
+		result[i] = m.events[idx]
+	}
+	return result
+}
+
+// RecentEvents returns the last n events.
+func (m *Manager) RecentEvents(n int) []Event {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	all := m.getEventsOrdered()
+	if len(all) <= n {
+		return all
+	}
+	return all[len(all)-n:]
 }
 
 // GetSpacecraftHistory returns history for a specific spacecraft.

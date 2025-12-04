@@ -30,9 +30,23 @@ func VelocityFromRTLTDelta(rtlt1, rtlt2 float64, deltaTime float64) float64 {
 	return (dist2 - dist1) / deltaTime
 }
 
+// Health represents link health classification.
+type Health string
+
+const (
+	HealthGood     Health = "GOOD"
+	HealthMarginal Health = "MARGINAL"
+	HealthPoor     Health = "POOR"
+)
+
 // StruggleIndex calculates a difficulty metric for a communication link.
 // Returns a value from 0 (easy) to 1 (difficult).
-// Factors: distance, data rate, signal quality, elevation angle.
+//
+// Factors and weights:
+//   - Distance (40%): log scale from 100k km (0) to 10B km (1)
+//   - Data rate (30%): log scale from 1 Mbps (0) to 100 bps (1)
+//   - Elevation (20%): 45°+ is easy (0), 0° is hard (1)
+//   - Signal quality (10%): if available, inverted 0-1 scale
 func StruggleIndex(link Link, elevation float64) float64 {
 	var score float64
 
@@ -68,6 +82,29 @@ func StruggleIndex(link Link, elevation float64) float64 {
 	}
 
 	return clamp(score, 0, 1)
+}
+
+// ClassifyHealth converts a struggle index to a health classification.
+//
+// Thresholds:
+//   - GOOD: struggle < 0.3 (strong signal, close, high rate, good elevation)
+//   - MARGINAL: 0.3 <= struggle < 0.6 (moderate conditions)
+//   - POOR: struggle >= 0.6 (weak signal, far, low rate, low elevation)
+func ClassifyHealth(struggle float64) Health {
+	switch {
+	case struggle < 0.3:
+		return HealthGood
+	case struggle < 0.6:
+		return HealthMarginal
+	default:
+		return HealthPoor
+	}
+}
+
+// LinkHealth computes struggle index and health for a link.
+func LinkHealth(link Link, elevation float64) (float64, Health) {
+	struggle := StruggleIndex(link, elevation)
+	return struggle, ClassifyHealth(struggle)
 }
 
 // ComplexUtilization calculates load metrics for each DSN complex.

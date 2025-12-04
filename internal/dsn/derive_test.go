@@ -412,3 +412,43 @@ func TestSkyObjects_Empty(t *testing.T) {
 		t.Errorf("expected nil for nil data, got %v", objs)
 	}
 }
+
+func TestClassifyHealth(t *testing.T) {
+	tests := []struct {
+		struggle float64
+		expected Health
+	}{
+		{0.0, HealthGood},
+		{0.1, HealthGood},
+		{0.29, HealthGood},
+		{0.3, HealthMarginal},
+		{0.5, HealthMarginal},
+		{0.59, HealthMarginal},
+		{0.6, HealthPoor},
+		{0.8, HealthPoor},
+		{1.0, HealthPoor},
+	}
+
+	for _, tt := range tests {
+		got := ClassifyHealth(tt.struggle)
+		if got != tt.expected {
+			t.Errorf("ClassifyHealth(%v) = %q, want %q", tt.struggle, got, tt.expected)
+		}
+	}
+}
+
+func TestLinkHealth(t *testing.T) {
+	// Easy link: should be GOOD
+	easyLink := Link{Distance: 400000, DataRate: 1e6}
+	struggle, health := LinkHealth(easyLink, 60)
+	if health != HealthGood {
+		t.Errorf("Easy link health = %q, want GOOD (struggle=%.2f)", health, struggle)
+	}
+
+	// Hard link: should be POOR
+	hardLink := Link{Distance: 24e9, DataRate: 160}
+	struggle, health = LinkHealth(hardLink, 5)
+	if health != HealthPoor {
+		t.Errorf("Hard link health = %q, want POOR (struggle=%.2f)", health, struggle)
+	}
+}

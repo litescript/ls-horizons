@@ -18,6 +18,13 @@ import (
 	"github.com/peter/ls-horizons/internal/ui"
 )
 
+// CLI flags for headless mode
+var (
+	summaryMode  bool
+	watchInterval time.Duration
+	snapshotPath string
+)
+
 const (
 	defaultRefresh = 5 * time.Second
 	minRefresh     = 1 * time.Second
@@ -28,6 +35,9 @@ func main() {
 	// Parse flags
 	refresh := flag.Duration("refresh", defaultRefresh, "Data refresh interval (e.g., 5s, 1m)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
+	flag.BoolVar(&summaryMode, "summary", false, "Print text summary instead of TUI")
+	flag.DurationVar(&watchInterval, "watch", 0, "Repeat fetch at interval (e.g., 30s). Implies --summary")
+	flag.StringVar(&snapshotPath, "snapshot-path", "", "Export JSON snapshot to file (use - for stdout)")
 	flag.Parse()
 
 	// Validate refresh interval
@@ -35,6 +45,11 @@ func main() {
 		*refresh = minRefresh
 	} else if *refresh > maxRefresh {
 		*refresh = maxRefresh
+	}
+
+	// --watch implies --summary
+	if watchInterval > 0 {
+		summaryMode = true
 	}
 
 	// Set up logging
@@ -58,6 +73,12 @@ func main() {
 	stateMgr := state.NewManager(stateCfg)
 
 	fetcher := dsn.NewFetcher()
+
+	// Headless mode: no TUI
+	if summaryMode || snapshotPath != "" {
+		runHeadless(ctx, fetcher, stateMgr, logger)
+		return
+	}
 
 	// Create TUI model
 	model := ui.New(stateMgr)
@@ -110,4 +131,72 @@ func doFetch(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager,
 
 	stateMgr.Update(result.Data, result.Duration, nil)
 	p.Send(ui.DataUpdateMsg{Snapshot: stateMgr.Snapshot()})
+}
+
+// runHeadless handles --summary and --snapshot-path modes without starting TUI.
+func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, logger *logging.Logger) {
+	outputOnce := func() error {
+		result := fetcher.Fetch(ctx)
+		if result.Error != nil {
+			return result.Error
+		}
+
+		stateMgr.Update(result.Data, result.Duration, nil)
+		snap := stateMgr.Snapshot()
+
+		// Export JSON if requested
+		if snapshotPath != "" {
+			export := dsn.ExportSnapshot(snap.Data, snap.LastFetch)
+			if snapshotPath == "-" {
+				if err := export.WriteJSON(os.Stdout); err != nil {
+					return fmt.Errorf("write JSON to stdout: %w", err)
+				}
+			} else {
+				f, err := os.Create(snapshotPath)
+				if err != nil {
+					return fmt.Errorf("create snapshot file: %w", err)
+				}
+				defer f.Close()
+				if err := export.WriteJSON(f); err != nil {
+					return fmt.Errorf("write JSON to file: %w", err)
+				}
+			}
+		}
+
+		// Print summary table if requested
+		if summaryMode {
+			dsn.WriteSummaryTable(os.Stdout, snap.Data, snap.LastFetch)
+		}
+
+		return nil
+	}
+
+	// Single run
+	if watchInterval == 0 {
+		if err := outputOnce(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Watch mode: repeat at interval
+	if err := outputOnce(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+	}
+
+	ticker := time.NewTicker(watchInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			fmt.Println() // Blank line between outputs
+			if err := outputOnce(); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+		}
+	}
 }
