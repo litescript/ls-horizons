@@ -1,0 +1,34 @@
+# Binary (root level only)
+/ls-horizons
+/ls-horizons.exe
+
+# Claude Code
+CLAUDE.md
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local/temp
+*.log
+*.tmp
+.env
+.env.local
