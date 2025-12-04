@@ -20,9 +20,9 @@ import (
 
 // CLI flags for headless mode
 var (
-	summaryMode  bool
+	summaryMode   bool
 	watchInterval time.Duration
-	snapshotPath string
+	snapshotPath  string
 )
 
 const (

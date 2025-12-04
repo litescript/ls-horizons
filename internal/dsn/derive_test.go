@@ -7,9 +7,9 @@ import (
 
 func TestDistanceFromRTLT(t *testing.T) {
 	tests := []struct {
-		name     string
-		rtlt     float64
-		expected float64
+		name      string
+		rtlt      float64
+		expected  float64
 		tolerance float64
 	}{
 		{
@@ -26,7 +26,7 @@ func TestDistanceFromRTLT(t *testing.T) {
 		},
 		{
 			name:      "Voyager 1 (approx 44 hours RTLT)",
-			rtlt:      160200, // ~44.5 hours in seconds
+			rtlt:      160200,        // ~44.5 hours in seconds
 			expected:  24016831044.8, // ~24 billion km
 			tolerance: 1e9,
 		},
@@ -264,11 +264,11 @@ func TestNextHandoffPrediction(t *testing.T) {
 		elevation float64
 		expected  Complex
 	}{
-		{ComplexGoldstone, 10, ComplexCanberra},  // Low elevation = handoff imminent
+		{ComplexGoldstone, 10, ComplexCanberra}, // Low elevation = handoff imminent
 		{ComplexCanberra, 10, ComplexMadrid},
 		{ComplexMadrid, 10, ComplexGoldstone},
-		{ComplexGoldstone, 45, ""},               // High elevation = no handoff
-		{ComplexGoldstone, 15, ""},               // At threshold
+		{ComplexGoldstone, 45, ""}, // High elevation = no handoff
+		{ComplexGoldstone, 15, ""}, // At threshold
 	}
 
 	for _, tt := range tests {

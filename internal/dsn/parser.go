@@ -17,11 +17,11 @@ type xmlDSN struct {
 }
 
 type xmlStation struct {
-	Name         string       `xml:"name,attr"`
-	FriendlyName string       `xml:"friendlyName,attr"`
-	TimeUTC      string       `xml:"timeUTC,attr"`
-	TimeZone     string       `xml:"timeZoneOffset,attr"`
-	Dishes       []xmlDish    `xml:"dish"`
+	Name         string    `xml:"name,attr"`
+	FriendlyName string    `xml:"friendlyName,attr"`
+	TimeUTC      string    `xml:"timeUTC,attr"`
+	TimeZone     string    `xml:"timeZoneOffset,attr"`
+	Dishes       []xmlDish `xml:"dish"`
 }
 
 type xmlDish struct {

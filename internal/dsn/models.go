@@ -39,7 +39,7 @@ type Station struct {
 
 // Antenna represents an individual DSN antenna.
 type Antenna struct {
-	ID          string  // e.g., "DSS14" or "DSS-14"
+	ID          string // e.g., "DSS14" or "DSS-14"
 	Name        string
 	Diameter    float64 // meters
 	Azimuth     float64 // degrees, 0-360
@@ -81,7 +81,7 @@ type Signal struct {
 type Spacecraft struct {
 	ID       int
 	Name     string
-	Links    []Link // Active links to this spacecraft
+	Links    []Link  // Active links to this spacecraft
 	Distance float64 // Estimated distance in km (derived)
 	Velocity float64 // Estimated velocity in km/s (derived)
 }
@@ -115,8 +115,8 @@ type Link struct {
 type DSNData struct {
 	Timestamp time.Time
 	Stations  []Station
-	Links     []Link      // All active links (flattened view)
-	Errors    []string    // Any parse warnings/errors
+	Links     []Link   // All active links (flattened view)
+	Errors    []string // Any parse warnings/errors
 }
 
 // ComplexLoad represents utilization metrics for a complex.

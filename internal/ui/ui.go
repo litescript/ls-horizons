@@ -43,10 +43,10 @@ type Model struct {
 	state *state.Manager
 
 	// UI state
-	viewMode          ViewMode
-	width             int
-	height            int
-	ready             bool
+	viewMode ViewMode
+	width    int
+	height   int
+	ready    bool
 
 	// Sub-models
 	dashboard     DashboardModel

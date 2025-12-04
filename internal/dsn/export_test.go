@@ -24,14 +24,14 @@ func TestExportSnapshot(t *testing.T) {
 		Links: []Link{
 			{
 				Complex:      ComplexGoldstone,
-				StationID:   "gdscc",
-				AntennaID:   "DSS-14",
-				Spacecraft:  "Voyager 1",
+				StationID:    "gdscc",
+				AntennaID:    "DSS-14",
+				Spacecraft:   "Voyager 1",
 				SpacecraftID: 31,
-				Band:        "X",
-				DataRate:    160,
-				Distance:    24e9,
-				RTLT:        160200,
+				Band:         "X",
+				DataRate:     160,
+				Distance:     24e9,
+				RTLT:         160200,
 			},
 		},
 	}
