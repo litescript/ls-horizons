@@ -234,3 +234,256 @@ func TestTruncateStr(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteMiniSky(t *testing.T) {
+	data := &DSNData{
+		Stations: []Station{
+			{
+				Complex: ComplexGoldstone,
+				Antennas: []Antenna{
+					{
+						ID:        "DSS-14",
+						Azimuth:   180,
+						Elevation: 45,
+						Targets:   []Target{{ID: 1, Name: "Voyager", RTLT: 160000}},
+					},
+				},
+			},
+		},
+		Links: []Link{
+			{AntennaID: "DSS-14", Spacecraft: "Voyager", Band: "X"},
+		},
+	}
+
+	var buf bytes.Buffer
+	WriteMiniSky(&buf, data, DefaultMiniSkyConfig())
+	output := buf.String()
+
+	// Check box characters present
+	if !strings.Contains(output, "┌") || !strings.Contains(output, "┘") {
+		t.Error("Mini sky should have box borders")
+	}
+	// Check station marker
+	if !strings.Contains(output, "▲") {
+		t.Error("Mini sky should have station marker")
+	}
+	// Check legend
+	if !strings.Contains(output, "Voyager") {
+		t.Error("Mini sky should have spacecraft in legend")
+	}
+}
+
+func TestWriteMiniSky_Empty(t *testing.T) {
+	var buf bytes.Buffer
+	WriteMiniSky(&buf, nil, DefaultMiniSkyConfig())
+	if !strings.Contains(buf.String(), "No spacecraft") {
+		t.Error("Empty data should show no spacecraft message")
+	}
+}
+
+func TestWriteNowPlaying(t *testing.T) {
+	data := &DSNData{
+		Stations: []Station{
+			{Antennas: []Antenna{{ID: "DSS-14", Elevation: 45}}},
+		},
+		Links: []Link{
+			{AntennaID: "DSS-14", Spacecraft: "Mars", DataRate: 1e6, RTLT: 1200},
+		},
+	}
+
+	var buf bytes.Buffer
+	WriteNowPlaying(&buf, data)
+	output := buf.String()
+
+	if !strings.Contains(output, "DSS-14") {
+		t.Error("Now playing should show antenna")
+	}
+	if !strings.Contains(output, "Mars") {
+		t.Error("Now playing should show spacecraft")
+	}
+}
+
+func TestWriteNowPlaying_Empty(t *testing.T) {
+	var buf bytes.Buffer
+	WriteNowPlaying(&buf, nil)
+	if !strings.Contains(buf.String(), "No active links") {
+		t.Error("Empty data should show no active links")
+	}
+}
+
+func TestWriteSpacecraftCard(t *testing.T) {
+	data := &DSNData{
+		Stations: []Station{
+			{Antennas: []Antenna{{ID: "DSS-43", Elevation: 30}}},
+		},
+		Links: []Link{
+			{
+				AntennaID:  "DSS-43",
+				Spacecraft: "Perseverance",
+				Band:       "X",
+				DataRate:   2e6,
+				Distance:   300e6,
+				RTLT:       2000,
+				Complex:    ComplexCanberra,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	WriteSpacecraftCard(&buf, data, "Perseverance", nil)
+	output := buf.String()
+
+	if !strings.Contains(output, "Perseverance") {
+		t.Error("Card should show spacecraft name")
+	}
+	if !strings.Contains(output, "DSS-43") {
+		t.Error("Card should show antenna")
+	}
+	if !strings.Contains(output, "┌") {
+		t.Error("Card should have box border")
+	}
+}
+
+func TestWriteSpacecraftCard_NotFound(t *testing.T) {
+	data := &DSNData{}
+	var buf bytes.Buffer
+	WriteSpacecraftCard(&buf, data, "NotExist", nil)
+	if !strings.Contains(buf.String(), "not currently tracked") {
+		t.Error("Should indicate spacecraft not found")
+	}
+}
+
+func TestComputeDiff(t *testing.T) {
+	prev := &DSNData{
+		Links: []Link{
+			{Spacecraft: "Alpha", StationID: "gdscc", DataRate: 1000},
+			{Spacecraft: "Beta", StationID: "cdscc", DataRate: 2000},
+		},
+	}
+	curr := &DSNData{
+		Links: []Link{
+			{Spacecraft: "Alpha", StationID: "mdscc", DataRate: 1000}, // Handoff
+			{Spacecraft: "Gamma", StationID: "gdscc", DataRate: 3000}, // New
+			// Beta is lost
+		},
+	}
+
+	diff := ComputeDiff(prev, curr)
+
+	if len(diff.NewLinks) != 1 || diff.NewLinks[0].Spacecraft != "Gamma" {
+		t.Errorf("NewLinks = %v, want [Gamma]", diff.NewLinks)
+	}
+	if len(diff.LostLinks) != 1 || diff.LostLinks[0].Spacecraft != "Beta" {
+		t.Errorf("LostLinks = %v, want [Beta]", diff.LostLinks)
+	}
+	if len(diff.Handoffs) != 1 || diff.Handoffs[0].Spacecraft != "Alpha" {
+		t.Errorf("Handoffs = %v, want [Alpha]", diff.Handoffs)
+	}
+}
+
+func TestComputeDiff_RateChange(t *testing.T) {
+	prev := &DSNData{
+		Links: []Link{{Spacecraft: "Test", DataRate: 1000}},
+	}
+	curr := &DSNData{
+		Links: []Link{{Spacecraft: "Test", DataRate: 2000}}, // 2x increase
+	}
+
+	diff := ComputeDiff(prev, curr)
+	if len(diff.RateChange) != 1 {
+		t.Errorf("RateChange count = %d, want 1", len(diff.RateChange))
+	}
+}
+
+func TestComputeDiff_NilPrev(t *testing.T) {
+	curr := &DSNData{
+		Links: []Link{{Spacecraft: "New"}},
+	}
+	diff := ComputeDiff(nil, curr)
+	if len(diff.NewLinks) != 1 {
+		t.Error("All links should be new when prev is nil")
+	}
+}
+
+func TestDiffResult_HasChanges(t *testing.T) {
+	empty := DiffResult{}
+	if empty.HasChanges() {
+		t.Error("Empty diff should not have changes")
+	}
+
+	withNew := DiffResult{NewLinks: []Link{{}}}
+	if !withNew.HasChanges() {
+		t.Error("Diff with new links should have changes")
+	}
+}
+
+func TestWriteDiff(t *testing.T) {
+	diff := DiffResult{
+		NewLinks:  []Link{{Spacecraft: "New", AntennaID: "DSS-14", DataRate: 1000}},
+		LostLinks: []Link{{Spacecraft: "Lost", AntennaID: "DSS-43"}},
+		Handoffs:  []Handoff{{Spacecraft: "Hand", From: "gdscc", To: "mdscc"}},
+	}
+
+	var buf bytes.Buffer
+	WriteDiff(&buf, diff, time.Now())
+	output := buf.String()
+
+	if !strings.Contains(output, "NEW") {
+		t.Error("Should show NEW link")
+	}
+	if !strings.Contains(output, "LOST") {
+		t.Error("Should show LOST link")
+	}
+	if !strings.Contains(output, "HANDOFF") {
+		t.Error("Should show HANDOFF")
+	}
+}
+
+func TestWriteDiff_NoChanges(t *testing.T) {
+	var buf bytes.Buffer
+	WriteDiff(&buf, DiffResult{}, time.Now())
+	if !strings.Contains(buf.String(), "No changes") {
+		t.Error("Empty diff should say no changes")
+	}
+}
+
+func TestWriteEvents(t *testing.T) {
+	events := []Event{
+		{Type: EventNewLink, Timestamp: time.Now(), Spacecraft: "Test", NewStation: "gdscc"},
+	}
+
+	var buf bytes.Buffer
+	WriteEvents(&buf, events, 10)
+	output := buf.String()
+
+	if !strings.Contains(output, "Event Log") {
+		t.Error("Should have Event Log header")
+	}
+	if !strings.Contains(output, "Test") {
+		t.Error("Should show spacecraft name")
+	}
+}
+
+func TestWriteEvents_Empty(t *testing.T) {
+	var buf bytes.Buffer
+	WriteEvents(&buf, nil, 10)
+	if !strings.Contains(buf.String(), "No events") {
+		t.Error("Empty events should say no events")
+	}
+}
+
+func TestFormatEventType(t *testing.T) {
+	tests := []struct {
+		t    EventType
+		want string
+	}{
+		{EventNewLink, "●NEW "},
+		{EventHandoff, "→HAND"},
+		{EventLinkLost, "○LOST"},
+	}
+	for _, tt := range tests {
+		if got := formatEventType(tt.t); got != tt.want {
+			t.Errorf("formatEventType(%v) = %q, want %q", tt.t, got, tt.want)
+		}
+	}
+}

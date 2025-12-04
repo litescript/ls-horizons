@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
 	"github.com/peter/ls-horizons/internal/dsn"
 	"github.com/peter/ls-horizons/internal/logging"
@@ -23,6 +24,12 @@ var (
 	summaryMode   bool
 	watchInterval time.Duration
 	snapshotPath  string
+	miniSkyMode   bool
+	nowMode       bool
+	scName        string
+	diffMode      bool
+	beepMode      bool
+	eventsMode    bool
 )
 
 const (
@@ -36,8 +43,14 @@ func main() {
 	refresh := flag.Duration("refresh", defaultRefresh, "Data refresh interval (e.g., 5s, 1m)")
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	flag.BoolVar(&summaryMode, "summary", false, "Print text summary instead of TUI")
-	flag.DurationVar(&watchInterval, "watch", 0, "Repeat fetch at interval (e.g., 30s). Implies --summary")
+	flag.DurationVar(&watchInterval, "watch", 0, "Repeat fetch at interval (e.g., 30s)")
 	flag.StringVar(&snapshotPath, "snapshot-path", "", "Export JSON snapshot to file (use - for stdout)")
+	flag.BoolVar(&miniSkyMode, "mini-sky", false, "Show ASCII mini sky view")
+	flag.BoolVar(&nowMode, "now", false, "Single-line now-playing mode")
+	flag.StringVar(&scName, "sc", "", "Show card for specific spacecraft")
+	flag.BoolVar(&diffMode, "diff", false, "Show only changes between fetches")
+	flag.BoolVar(&beepMode, "beep", false, "Beep on important events (TTY only)")
+	flag.BoolVar(&eventsMode, "events", false, "Show event log")
 	flag.Parse()
 
 	// Validate refresh interval
@@ -45,11 +58,6 @@ func main() {
 		*refresh = minRefresh
 	} else if *refresh > maxRefresh {
 		*refresh = maxRefresh
-	}
-
-	// --watch implies --summary
-	if watchInterval > 0 {
-		summaryMode = true
 	}
 
 	// Set up logging
@@ -75,7 +83,8 @@ func main() {
 	fetcher := dsn.NewFetcher()
 
 	// Headless mode: no TUI
-	if summaryMode || snapshotPath != "" {
+	headless := summaryMode || snapshotPath != "" || miniSkyMode || nowMode || scName != "" || diffMode || eventsMode
+	if headless {
 		runHeadless(ctx, fetcher, stateMgr, logger)
 		return
 	}
@@ -133,8 +142,11 @@ func doFetch(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager,
 	p.Send(ui.DataUpdateMsg{Snapshot: stateMgr.Snapshot()})
 }
 
-// runHeadless handles --summary and --snapshot-path modes without starting TUI.
+// runHeadless handles all headless modes without starting TUI.
 func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, logger *logging.Logger) {
+	var prevData *dsn.DSNData
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+
 	outputOnce := func() error {
 		result := fetcher.Fetch(ctx)
 		if result.Error != nil {
@@ -143,6 +155,31 @@ func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Mana
 
 		stateMgr.Update(result.Data, result.Duration, nil)
 		snap := stateMgr.Snapshot()
+
+		// Diff mode
+		if diffMode {
+			diff := dsn.ComputeDiff(prevData, snap.Data)
+			dsn.WriteDiff(os.Stdout, diff, snap.LastFetch)
+			// Beep on changes
+			if beepMode && isTTY && diff.HasChanges() {
+				fmt.Print("\a")
+			}
+			prevData = snap.Data
+			return nil
+		}
+
+		// Now-playing mode
+		if nowMode {
+			dsn.WriteNowPlaying(os.Stdout, snap.Data)
+			return nil
+		}
+
+		// Spacecraft card mode
+		if scName != "" {
+			events := convertEvents(snap.Events)
+			dsn.WriteSpacecraftCard(os.Stdout, snap.Data, scName, events)
+			return nil
+		}
 
 		// Export JSON if requested
 		if snapshotPath != "" {
@@ -168,6 +205,31 @@ func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Mana
 			dsn.WriteSummaryTable(os.Stdout, snap.Data, snap.LastFetch)
 		}
 
+		// Mini sky view
+		if miniSkyMode {
+			fmt.Println()
+			dsn.WriteMiniSky(os.Stdout, snap.Data, dsn.DefaultMiniSkyConfig())
+		}
+
+		// Events log
+		if eventsMode {
+			fmt.Println()
+			events := convertEvents(snap.Events)
+			dsn.WriteEvents(os.Stdout, events, 10)
+		}
+
+		// Beep check for events (only in non-diff mode)
+		if beepMode && isTTY && len(snap.Events) > 0 {
+			// Beep if there are recent events (within last interval)
+			for _, e := range snap.Events {
+				if time.Since(e.Timestamp) < watchInterval+time.Second {
+					fmt.Print("\a")
+					break
+				}
+			}
+		}
+
+		prevData = snap.Data
 		return nil
 	}
 
@@ -193,10 +255,29 @@ func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Mana
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			fmt.Println() // Blank line between outputs
+			if !diffMode && !nowMode {
+				fmt.Println() // Blank line between outputs (except diff/now mode)
+			}
 			if err := outputOnce(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			}
 		}
 	}
+}
+
+// convertEvents converts state.Event to dsn.Event (avoiding import cycle).
+func convertEvents(stateEvents []state.Event) []dsn.Event {
+	events := make([]dsn.Event, len(stateEvents))
+	for i, e := range stateEvents {
+		events[i] = dsn.Event{
+			Type:       dsn.EventType(e.Type),
+			Timestamp:  e.Timestamp,
+			Spacecraft: e.Spacecraft,
+			OldStation: e.OldStation,
+			NewStation: e.NewStation,
+			AntennaID:  e.AntennaID,
+			Complex:    e.Complex,
+		}
+	}
+	return events
 }
