@@ -17,11 +17,11 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
   │  GOLDSTONE          CANBERRA           MADRID                                    │
   │  ████████░░ 80%     ██████░░░░ 60%     ████████░░ 80%                            │
   ├──────────────────────────────────────────────────────────────────────────────────┤
-  │  ANTENNA   SPACECRAFT          BAND   RATE        DISTANCE       HEALTH         │
-  │  DSS-14    Voyager 1           S/X    160 bps     24.5 B km      POOR           │
-  │  DSS-43    Mars Perseverance   X      2.1 Mbps    389 M km       GOOD           │
-  │  DSS-55    Europa Clipper      X      115 kbps    891 M km       GOOD           │
-  │  DSS-34    JWST                Ka     28.6 Mbps   1.5 M km       GOOD           │
+  │  ANTENNA   SPACECRAFT          BAND   RATE        DISTANCE       HEALTH          │
+  │  DSS-14    Voyager 1           S/X    160 bps     24.5 B km      POOR            │
+  │  DSS-43    Mars Perseverance   X      2.1 Mbps    389 M km       GOOD            │
+  │  DSS-55    Europa Clipper      X      115 kbps    891 M km       GOOD            │
+  │  DSS-34    JWST                Ka     28.6 Mbps   1.5 M km       GOOD            │
   └──────────────────────────────────────────────────────────────────────────────────┘
 
   ● 3s ago (127ms)  |  q: quit | tab: switch view | ↑↓: navigate
