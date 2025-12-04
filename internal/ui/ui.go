@@ -2,9 +2,11 @@
 package ui
 
 import (
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/peter/ls-horizons/internal/dsn"
 	"github.com/peter/ls-horizons/internal/state"
@@ -110,9 +112,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 
 		// Propagate to sub-models
-		m.dashboard = m.dashboard.SetSize(msg.Width, msg.Height-4) // Reserve space for header/footer
-		m.missionDetail = m.missionDetail.SetSize(msg.Width, msg.Height-4)
-		m.skyView = m.skyView.SetSize(msg.Width, msg.Height-4)
+		// Logo takes ~10 lines, footer ~2 lines
+		contentHeight := msg.Height - 14
+		m.dashboard = m.dashboard.SetSize(msg.Width, contentHeight)
+		m.missionDetail = m.missionDetail.SetSize(msg.Width, contentHeight)
+		m.skyView = m.skyView.SetSize(msg.Width, contentHeight)
 
 	case TickMsg:
 		cmds = append(cmds, tickCmd())
@@ -176,40 +180,88 @@ func (m Model) renderFrame(content string) string {
 }
 
 func (m Model) renderHeader() string {
-	title := "LS-HORIZONS"
+	return m.renderLogo() + m.renderStatusLine()
+}
+
+func (m Model) renderLogo() string {
+	// ASCII art with nebula/space gradient coloring
+	logo := []string{
+		`  ██╗     ███████╗      ██╗  ██╗ ██████╗ ██████╗ ██╗███████╗ ██████╗ ███╗   ██╗███████╗`,
+		`  ██║     ██╔════╝      ██║  ██║██╔═══██╗██╔══██╗██║╚══███╔╝██╔═══██╗████╗  ██║██╔════╝`,
+		`  ██║     ███████╗█████╗███████║██║   ██║██████╔╝██║  ███╔╝ ██║   ██║██╔██╗ ██║███████╗`,
+		`  ██║     ╚════██║╚════╝██╔══██║██║   ██║██╔══██╗██║ ███╔╝  ██║   ██║██║╚██╗██║╚════██║`,
+		`  ███████╗███████║      ██║  ██║╚██████╔╝██║  ██║██║███████╗╚██████╔╝██║ ╚████║███████║`,
+		`  ╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝`,
+	}
+
+	// Space/nebula gradient - deep purple to bright blue/pink
+	colors := []string{
+		"#9D4EDD", // Vibrant purple
+		"#7B2CBF", // Deep purple
+		"#5A189A", // Royal purple
+		"#3C096C", // Dark purple
+		"#240046", // Deep violet
+		"#10002B", // Near black purple
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+
+	for i, line := range logo {
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i]))
+		b.WriteString(style.Render(line))
+		b.WriteString("\n")
+	}
+
+	// Tagline
+	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("60"))
+	b.WriteString(muted.Render("  Deep Space Network · Real-time Visualization"))
+	b.WriteString("\n\n")
+
+	return b.String()
+}
+
+func (m Model) renderStatusLine() string {
 	tabs := m.renderTabs()
-	return title + "  " + tabs
+	return tabs + "\n"
 }
 
 func (m Model) renderTabs() string {
 	tabs := []string{"[1] Dashboard", "[2] Mission", "[3] Sky"}
-	result := ""
+	activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9D4EDD")).Bold(true)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("60"))
+
+	var parts []string
 	for i, tab := range tabs {
 		if ViewMode(i) == m.viewMode {
-			result += "▶ " + tab + "  "
+			parts = append(parts, activeStyle.Render("▶ "+tab))
 		} else {
-			result += "  " + tab + "  "
+			parts = append(parts, dimStyle.Render("  "+tab))
 		}
 	}
-	return result
+	return "  " + strings.Join(parts, "  ")
 }
 
 func (m Model) renderFooter() string {
-	status := ""
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("60"))
+	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#E84A27"))
+	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7B2CBF"))
+
+	var status string
 	if m.snapshot.LastError != nil {
-		status = "ERROR: " + m.snapshot.LastError.Error()
+		status = errorStyle.Render("ERROR: " + m.snapshot.LastError.Error())
 	} else if !m.snapshot.LastFetch.IsZero() {
 		ago := time.Since(m.snapshot.LastFetch).Round(time.Second)
-		status = "Last update: " + ago.String() + " ago"
+		status = accentStyle.Render("●") + dimStyle.Render(" "+ago.String()+" ago")
 		if m.snapshot.FetchDuration > 0 {
-			status += " (" + m.snapshot.FetchDuration.Round(time.Millisecond).String() + ")"
+			status += dimStyle.Render(" (" + m.snapshot.FetchDuration.Round(time.Millisecond).String() + ")")
 		}
 	} else {
-		status = "Waiting for data..."
+		status = dimStyle.Render("◌ Waiting for data...")
 	}
 
-	help := "q: quit | tab: switch view | ↑↓: navigate"
-	return status + "  |  " + help
+	help := dimStyle.Render("q: quit | tab: switch view | ↑↓: navigate")
+	return "  " + status + "  " + dimStyle.Render("|") + "  " + help
 }
 
 // GetSelectedSpacecraft returns the currently selected spacecraft ID (for mission detail).
