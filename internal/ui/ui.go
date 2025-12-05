@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/peter/ls-horizons/internal/dsn"
 	"github.com/peter/ls-horizons/internal/state"
+	"github.com/peter/ls-horizons/internal/version"
 )
 
 // ViewMode represents the current UI view.
@@ -35,6 +37,11 @@ type (
 	ErrorMsg struct {
 		Error error
 	}
+
+	// updateCheckMsg contains result of version check.
+	updateCheckMsg struct {
+		info version.UpdateInfo
+	}
 )
 
 // Model is the root Bubble Tea model.
@@ -43,10 +50,11 @@ type Model struct {
 	state *state.Manager
 
 	// UI state
-	viewMode ViewMode
-	width    int
-	height   int
-	ready    bool
+	viewMode  ViewMode
+	width     int
+	height    int
+	ready     bool
+	statusMsg string // Status message for update checks, etc.
 
 	// Sub-models
 	dashboard     DashboardModel
@@ -101,9 +109,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cycle through views
 			m.viewMode = (m.viewMode + 1) % 3
 
+		case "u":
+			m.statusMsg = "Checking for updates..."
+			return m, checkForUpdate()
+
 		default:
 			// Pass to active view
 			cmds = append(cmds, m.updateActiveView(msg))
+		}
+
+	case updateCheckMsg:
+		if msg.info.Error != nil {
+			m.statusMsg = fmt.Sprintf("Update check failed: %v", msg.info.Error)
+		} else if msg.info.UpdateAvailable {
+			m.statusMsg = fmt.Sprintf("Update available: v%s → v%s",
+				msg.info.CurrentVersion, msg.info.LatestVersion)
+		} else {
+			m.statusMsg = fmt.Sprintf("You're on the latest version (v%s)", msg.info.CurrentVersion)
 		}
 
 	case tea.WindowSizeMsg:
@@ -112,8 +134,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 
 		// Propagate to sub-models
-		// Logo takes ~10 lines, footer ~2 lines
-		contentHeight := msg.Height - 14
+		// Logo takes ~11 lines (added version line), footer ~2 lines
+		contentHeight := msg.Height - 15
 		m.dashboard = m.dashboard.SetSize(msg.Width, contentHeight)
 		m.missionDetail = m.missionDetail.SetSize(msg.Width, contentHeight)
 		m.skyView = m.skyView.SetSize(msg.Width, contentHeight)
@@ -216,6 +238,11 @@ func (m Model) renderLogo() string {
 	// Tagline
 	muted := lipgloss.NewStyle().Foreground(lipgloss.Color("60"))
 	b.WriteString(muted.Render("  Deep Space Network · Real-time Visualization"))
+	b.WriteString("\n")
+
+	// Version/copyright line
+	copyright := fmt.Sprintf("  (c) 2025 litescript.net | v%s | [u]check update", version.Version)
+	b.WriteString(muted.Render(copyright))
 	b.WriteString("\n\n")
 
 	return b.String()
@@ -261,7 +288,15 @@ func (m Model) renderFooter() string {
 	}
 
 	help := dimStyle.Render("q: quit | tab: switch view | ↑↓: navigate")
-	return "  " + status + "  " + dimStyle.Render("|") + "  " + help
+
+	footer := "  " + status + "  " + dimStyle.Render("|") + "  " + help
+
+	// Show update status message if present
+	if m.statusMsg != "" {
+		footer += "\n  " + dimStyle.Render(m.statusMsg)
+	}
+
+	return footer
 }
 
 // GetSelectedSpacecraft returns the currently selected spacecraft ID (for mission detail).
@@ -278,6 +313,13 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
 		return TickMsg(t)
 	})
+}
+
+func checkForUpdate() tea.Cmd {
+	return func() tea.Msg {
+		info := version.CheckForUpdate()
+		return updateCheckMsg{info: info}
+	}
 }
 
 // SendDataUpdate creates a command that sends a data update message.

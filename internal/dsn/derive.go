@@ -107,6 +107,17 @@ func LinkHealth(link Link, elevation float64) (float64, Health) {
 	return struggle, ClassifyHealth(struggle)
 }
 
+// IsRealSpacecraft returns true if the target name is a real spacecraft,
+// not an internal DSN target like calibration or maintenance.
+func IsRealSpacecraft(name string) bool {
+	switch name {
+	case "DSN", "DSS", "":
+		return false
+	default:
+		return true
+	}
+}
+
 // ComplexUtilization calculates load metrics for each DSN complex.
 func ComplexUtilization(data *DSNData) map[Complex]ComplexLoad {
 	loads := make(map[Complex]ComplexLoad)
@@ -128,8 +139,11 @@ func ComplexUtilization(data *DSNData) map[Complex]ComplexLoad {
 		antennaCount[complex] += len(station.Antennas)
 
 		for _, ant := range station.Antennas {
-			if len(ant.Targets) > 0 {
-				activeLinks[complex] += len(ant.Targets)
+			// Only count targets that are real spacecraft (not DSN/DSS internal)
+			for _, target := range ant.Targets {
+				if IsRealSpacecraft(target.Name) {
+					activeLinks[complex]++
+				}
 			}
 		}
 	}
