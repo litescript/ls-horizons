@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/peter/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/dsn"
 )
 
 // EventType represents the type of state change event.
@@ -62,6 +62,7 @@ type Manager struct {
 	// Current state
 	current       *dsn.DSNData
 	lastFetch     time.Time
+	nextRefresh   time.Time
 	lastError     error
 	fetchDuration time.Duration
 
@@ -274,6 +275,7 @@ func (m *Manager) updateSpacecraftHistory(data *dsn.DSNData) {
 type Snapshot struct {
 	Data          *dsn.DSNData
 	LastFetch     time.Time
+	NextRefresh   time.Time // When the next fetch is scheduled
 	LastError     error
 	FetchDuration time.Duration
 	ComplexLoads  map[dsn.Complex]dsn.ComplexLoad
@@ -309,6 +311,7 @@ func (m *Manager) Snapshot() Snapshot {
 	return Snapshot{
 		Data:          m.current,
 		LastFetch:     m.lastFetch,
+		NextRefresh:   m.nextRefresh,
 		LastError:     m.lastError,
 		FetchDuration: m.fetchDuration,
 		ComplexLoads:  loads,
@@ -316,6 +319,13 @@ func (m *Manager) Snapshot() Snapshot {
 		SkyObjects:    skyObjs,
 		Events:        events,
 	}
+}
+
+// SetNextRefresh updates the next scheduled refresh time.
+func (m *Manager) SetNextRefresh(t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nextRefresh = t
 }
 
 // getEventsOrdered returns events in chronological order.

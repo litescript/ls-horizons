@@ -1,4 +1,4 @@
-module github.com/peter/ls-horizons
+module github.com/litescript/ls-horizons
 
 go 1.25.4
 

@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/peter/ls-horizons/internal/dsn"
-	"github.com/peter/ls-horizons/internal/state"
+	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/state"
 )
 
 // MissionDetailModel shows detailed info for a selected spacecraft.

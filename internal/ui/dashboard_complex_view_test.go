@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peter/ls-horizons/internal/dsn"
-	"github.com/peter/ls-horizons/internal/state"
+	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/state"
 )
 
 func TestComplexStatus_Classification(t *testing.T) {
