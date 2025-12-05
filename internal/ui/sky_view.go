@@ -11,6 +11,7 @@ import (
 
 	"github.com/litescript/ls-horizons/internal/astro"
 	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/ephem"
 	"github.com/litescript/ls-horizons/internal/state"
 )
 
@@ -32,10 +33,10 @@ const (
 	colorSpacecraftFocused = "229" // bright gold
 
 	// Star glyphs by magnitude
-	glyphStarBright   = '✶' // mag < 1.5
-	glyphStarMedium   = '✸' // mag 1.5-3.0
-	glyphStarDim      = '·' // mag 3.0-4.0
-	glyphStarVeryDim  = '·' // mag > 4.0
+	glyphStarBright  = '✶' // mag < 1.5
+	glyphStarMedium  = '✸' // mag 1.5-3.0
+	glyphStarDim     = '·' // mag 3.0-4.0
+	glyphStarVeryDim = '·' // mag > 4.0
 
 	// Star colors (grayscale to not compete with spacecraft)
 	colorStarBright  = "255" // bright white
@@ -52,6 +53,40 @@ const (
 	LabelFocused                  // Only focused spacecraft
 	LabelAll                      // All spacecraft
 )
+
+// PathMode controls whether trajectory path is displayed.
+type PathMode int
+
+const (
+	PathOff PathMode = iota // No path display
+	PathOn                  // Show trajectory arc
+)
+
+// Path display constants
+const (
+	// Path colors - gradient from past to future
+	colorPathPast   = "#6B5B7A" // muted purple for past
+	colorPathNow    = "#B794F6" // bright purple for current position
+	colorPathFuture = "#9D7CD8" // medium purple for future
+
+	// Path refresh interval
+	pathRefreshInterval = 5 * time.Minute
+)
+
+// Braille dot positions for 2x4 subpixel rendering
+// Each braille character is 2 dots wide, 4 dots tall
+// Bit positions:
+//
+//	0x01 0x08
+//	0x02 0x10
+//	0x04 0x20
+//	0x40 0x80
+var brailleDots = [4][2]rune{
+	{0x01, 0x08},
+	{0x02, 0x10},
+	{0x04, 0x20},
+	{0x40, 0x80},
+}
 
 // SkyViewModel renders the sky dome with spacecraft positions.
 type SkyViewModel struct {
@@ -80,6 +115,14 @@ type SkyViewModel struct {
 	// Label display mode
 	labelMode LabelMode
 
+	// Path display mode and data
+	pathMode         PathMode
+	pathProvider     ephem.Provider // nil = paths disabled
+	currentPath      ephem.EphemerisPath
+	pathFocusTarget  ephem.TargetID // NAIF ID of focused target for path
+	pathLastFetch    time.Time
+	pathFetchPending bool
+
 	// Star catalog (loaded once)
 	starCatalog astro.StarCatalog
 }
@@ -90,8 +133,15 @@ func NewSkyViewModel() SkyViewModel {
 		camAz:       180,
 		camEl:       45,
 		labelMode:   LabelFocused, // default to showing focused spacecraft label
+		pathMode:    PathOff,      // paths off by default until provider is set
 		starCatalog: astro.DefaultStarCatalog(),
 	}
+}
+
+// SetPathProvider sets the ephemeris provider for trajectory paths.
+func (m SkyViewModel) SetPathProvider(provider ephem.Provider) SkyViewModel {
+	m.pathProvider = provider
+	return m
 }
 
 // SetSize updates the viewport size.
@@ -160,6 +210,12 @@ func animTick() tea.Cmd {
 	})
 }
 
+// pathFetchMsg is sent when a path fetch completes
+type pathFetchMsg struct {
+	path ephem.EphemerisPath
+	err  error
+}
+
 // Update handles messages.
 func (m SkyViewModel) Update(msg tea.Msg) (SkyViewModel, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -175,11 +231,21 @@ func (m SkyViewModel) Update(msg tea.Msg) (SkyViewModel, tea.Cmd) {
 		case "c":
 			// Cycle complex filter
 			m = m.cycleComplex()
+		case "p":
+			// Toggle path mode
+			return m.togglePathMode()
 		}
 
 	case animTickMsg:
 		if m.animating {
 			return m.updateAnimation()
+		}
+
+	case pathFetchMsg:
+		m.pathFetchPending = false
+		if msg.err == nil {
+			m.currentPath = msg.path
+			m.pathLastFetch = time.Now()
 		}
 	}
 
@@ -191,12 +257,74 @@ func (m SkyViewModel) cycleLabelMode() SkyViewModel {
 	return m
 }
 
+func (m SkyViewModel) togglePathMode() (SkyViewModel, tea.Cmd) {
+	// Can only enable path mode if provider is available
+	if m.pathProvider == nil {
+		return m, nil
+	}
+
+	if m.pathMode == PathOff {
+		m.pathMode = PathOn
+		// Trigger path fetch for focused spacecraft
+		return m.fetchPathForFocus()
+	}
+
+	m.pathMode = PathOff
+	m.currentPath = ephem.EphemerisPath{}
+	return m, nil
+}
+
+func (m SkyViewModel) fetchPathForFocus() (SkyViewModel, tea.Cmd) {
+	if m.pathProvider == nil || len(m.spacecraft) == 0 || m.focusIdx >= len(m.spacecraft) {
+		return m, nil
+	}
+
+	sc := m.spacecraft[m.focusIdx]
+	naifID := ephem.GetNAIFID(sc.Code)
+	if naifID == 0 {
+		// Unknown spacecraft - can't fetch path
+		return m, nil
+	}
+
+	// Check if we already have a recent path for this target
+	if m.pathFocusTarget == naifID && time.Since(m.pathLastFetch) < pathRefreshInterval {
+		return m, nil
+	}
+
+	m.pathFocusTarget = naifID
+	m.pathFetchPending = true
+
+	// Get observer for the focused spacecraft's complex
+	obs := m.getObserver()
+
+	// Create async fetch command
+	provider := m.pathProvider
+	now := time.Now()
+	// Fetch ±6 hours with 5-minute steps for smooth arcs
+	start := now.Add(-6 * time.Hour)
+	end := now.Add(6 * time.Hour)
+	step := 5 * time.Minute
+
+	return m, func() tea.Msg {
+		path, err := provider.GetPath(naifID, start, end, step, obs)
+		return pathFetchMsg{path: path, err: err}
+	}
+}
+
 func (m SkyViewModel) focusNext() (SkyViewModel, tea.Cmd) {
 	if len(m.spacecraft) == 0 {
 		return m, nil
 	}
 	m.focusIdx = (m.focusIdx + 1) % len(m.spacecraft)
-	return m.startAnimation()
+	m, animCmd := m.startAnimation()
+
+	// If path mode is on, fetch path for new focus
+	var pathCmd tea.Cmd
+	if m.pathMode == PathOn {
+		m, pathCmd = m.fetchPathForFocus()
+	}
+
+	return m, tea.Batch(animCmd, pathCmd)
 }
 
 func (m SkyViewModel) focusPrev() (SkyViewModel, tea.Cmd) {
@@ -207,7 +335,15 @@ func (m SkyViewModel) focusPrev() (SkyViewModel, tea.Cmd) {
 	if m.focusIdx < 0 {
 		m.focusIdx = len(m.spacecraft) - 1
 	}
-	return m.startAnimation()
+	m, animCmd := m.startAnimation()
+
+	// If path mode is on, fetch path for new focus
+	var pathCmd tea.Cmd
+	if m.pathMode == PathOn {
+		m, pathCmd = m.fetchPathForFocus()
+	}
+
+	return m, tea.Batch(animCmd, pathCmd)
 }
 
 func (m SkyViewModel) startAnimation() (SkyViewModel, tea.Cmd) {
@@ -313,9 +449,21 @@ func (m SkyViewModel) renderHeader() string {
 		labelStr = accentStyle.Render("Labels: all")
 	}
 
+	// Path mode indicator
+	var pathStr string
+	if m.pathProvider == nil {
+		pathStr = dimStyle.Render("Path: n/a")
+	} else if m.pathMode == PathOff {
+		pathStr = dimStyle.Render("Path: off")
+	} else if m.pathFetchPending {
+		pathStr = accentStyle.Render("Path: loading...")
+	} else {
+		pathStr = accentStyle.Render("Path: on")
+	}
+
 	compass := dimStyle.Render(fmt.Sprintf("Az:%.0f° El:%.0f°", m.camAz, m.camEl))
 
-	return fmt.Sprintf("%s | %s | %s | %s", title, complexStr, labelStr, compass)
+	return fmt.Sprintf("%s | %s | %s | %s | %s", title, complexStr, labelStr, pathStr, compass)
 }
 
 func (m SkyViewModel) renderStatus() string {
@@ -425,6 +573,11 @@ func (m SkyViewModel) renderSkyCanvas(width, height int) string {
 		glyph, color := m.starGlyph(star.Mag)
 		canvas[y][x] = glyph
 		colors[y][x] = color
+	}
+
+	// Draw trajectory path if enabled and available
+	if m.pathMode == PathOn && len(m.currentPath.Points) > 0 {
+		m.renderPath(canvas, colors, width, horizonY, now)
 	}
 
 	// Draw horizon line (purple tint)
@@ -591,6 +744,186 @@ func (m SkyViewModel) renderLabels(canvas [][]rune, colors [][]lipgloss.Color, w
 			colors[pos.y][x] = labelColor
 		}
 	}
+}
+
+// brailleCanvas holds subpixel data for smooth arc rendering.
+// Each cell maps to a 2x4 grid of braille dots.
+type brailleCanvas struct {
+	width, height int
+	dots          [][]rune           // accumulated braille patterns
+	colors        [][]lipgloss.Color // color per cell
+}
+
+func newBrailleCanvas(width, height int) *brailleCanvas {
+	bc := &brailleCanvas{
+		width:  width,
+		height: height,
+		dots:   make([][]rune, height),
+		colors: make([][]lipgloss.Color, height),
+	}
+	for y := 0; y < height; y++ {
+		bc.dots[y] = make([]rune, width)
+		bc.colors[y] = make([]lipgloss.Color, width)
+		for x := 0; x < width; x++ {
+			bc.colors[y][x] = colorPathFuture // default color
+		}
+	}
+	return bc
+}
+
+// setDot sets a subpixel dot at high-resolution coordinates.
+// subX is 0-1 within the cell, subY is 0-3 within the cell.
+func (bc *brailleCanvas) setDot(cellX, cellY, subX, subY int, color lipgloss.Color) {
+	if cellX < 0 || cellX >= bc.width || cellY < 0 || cellY >= bc.height {
+		return
+	}
+	if subX < 0 || subX > 1 || subY < 0 || subY > 3 {
+		return
+	}
+	bc.dots[cellY][cellX] |= brailleDots[subY][subX]
+	bc.colors[cellY][cellX] = color
+}
+
+// setPixel sets a dot using floating-point coordinates with 2x4 subpixel resolution.
+func (bc *brailleCanvas) setPixel(fx, fy float64, color lipgloss.Color) {
+	// Scale to subpixel grid (2x horizontal, 4x vertical)
+	subX := fx * 2
+	subY := fy * 4
+
+	cellX := int(subX) / 2
+	cellY := int(subY) / 4
+	dotX := int(subX) % 2
+	dotY := int(subY) % 4
+
+	bc.setDot(cellX, cellY, dotX, dotY, color)
+}
+
+// render composites the braille canvas onto the main canvas.
+func (bc *brailleCanvas) render(canvas [][]rune, colors [][]lipgloss.Color) {
+	for y := 0; y < bc.height && y < len(canvas); y++ {
+		for x := 0; x < bc.width && x < len(canvas[y]); x++ {
+			if bc.dots[y][x] != 0 {
+				// Only draw on empty cells or other braille
+				if canvas[y][x] == ' ' || (canvas[y][x] >= 0x2800 && canvas[y][x] <= 0x28FF) {
+					if canvas[y][x] >= 0x2800 && canvas[y][x] <= 0x28FF {
+						// Merge with existing braille
+						canvas[y][x] = 0x2800 | (canvas[y][x] - 0x2800) | bc.dots[y][x]
+					} else {
+						canvas[y][x] = 0x2800 | bc.dots[y][x]
+					}
+					colors[y][x] = bc.colors[y][x]
+				}
+			}
+		}
+	}
+}
+
+// renderPath draws the trajectory path arc using braille subpixels for smooth curves.
+func (m SkyViewModel) renderPath(canvas [][]rune, colors [][]lipgloss.Color, width, horizonY int, now time.Time) {
+	if len(m.currentPath.Points) == 0 {
+		return
+	}
+
+	bc := newBrailleCanvas(width, horizonY)
+
+	// Collect visible points with screen coordinates
+	type screenPoint struct {
+		x, y   float64
+		isPast bool
+	}
+	var points []screenPoint
+
+	for _, point := range m.currentPath.Points {
+		if !point.Valid {
+			continue
+		}
+
+		// Project to screen (use float for subpixel precision)
+		fx, fy, visible := m.projectToScreenFloat(point.Coord.AzDeg, point.Coord.ElDeg, width, horizonY)
+		if !visible {
+			continue
+		}
+
+		// Skip points outside bounds
+		if fx < 0 || fx >= float64(width) || fy < 0 || fy >= float64(horizonY) {
+			continue
+		}
+
+		points = append(points, screenPoint{
+			x:      fx,
+			y:      fy,
+			isPast: point.Time.Before(now),
+		})
+	}
+
+	if len(points) < 2 {
+		return
+	}
+
+	// Draw connected line segments between points
+	for i := 0; i < len(points)-1; i++ {
+		p0 := points[i]
+		p1 := points[i+1]
+
+		// Choose color based on time
+		var color lipgloss.Color
+		if p0.isPast && p1.isPast {
+			color = colorPathPast
+		} else if !p0.isPast && !p1.isPast {
+			color = colorPathFuture
+		} else {
+			color = colorPathNow // transition point
+		}
+
+		// Draw line using Bresenham-style interpolation with subpixel precision
+		drawBrailleLine(bc, p0.x, p0.y, p1.x, p1.y, color)
+	}
+
+	// Composite onto main canvas
+	bc.render(canvas, colors)
+}
+
+// drawBrailleLine draws a line between two points with subpixel precision.
+func drawBrailleLine(bc *brailleCanvas, x0, y0, x1, y1 float64, color lipgloss.Color) {
+	dx := x1 - x0
+	dy := y1 - y0
+	dist := math.Sqrt(dx*dx + dy*dy)
+
+	if dist < 0.1 {
+		bc.setPixel(x0, y0, color)
+		return
+	}
+
+	// Step size for smooth curves (smaller = smoother but more dots)
+	steps := int(dist*4) + 1
+	if steps > 200 {
+		steps = 200
+	}
+
+	for i := 0; i <= steps; i++ {
+		t := float64(i) / float64(steps)
+		x := x0 + dx*t
+		y := y0 + dy*t
+		bc.setPixel(x, y, color)
+	}
+}
+
+// projectToScreenFloat is like projectToScreen but returns float coordinates.
+func (m SkyViewModel) projectToScreenFloat(az, el float64, width, height int) (float64, float64, bool) {
+	dAz := normalizeAngle(az - m.camAz)
+	dEl := el - m.camEl
+
+	if dAz < -fovAz/2 || dAz > fovAz/2 {
+		return 0, 0, false
+	}
+	if dEl < -fovEl/2 || dEl > fovEl/2 {
+		return 0, 0, false
+	}
+
+	x := (dAz + fovAz/2) / fovAz * float64(width)
+	y := (fovEl/2 - dEl) / fovEl * float64(height)
+
+	return x, y, true
 }
 
 // starGlyph returns the appropriate glyph and color for a star based on its magnitude.

@@ -11,8 +11,8 @@ import (
 
 func TestComplexStatus_Classification(t *testing.T) {
 	now := time.Now()
-	recent := now.Add(-60 * time.Second)  // within 120s window
-	old := now.Add(-300 * time.Second)    // outside 120s window
+	recent := now.Add(-60 * time.Second) // within 120s window
+	old := now.Add(-300 * time.Second)   // outside 120s window
 
 	tests := []struct {
 		name      string

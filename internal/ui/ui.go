@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/ephem"
 	"github.com/litescript/ls-horizons/internal/state"
 	"github.com/litescript/ls-horizons/internal/version"
 )
@@ -66,13 +67,18 @@ type Model struct {
 }
 
 // New creates a new root UI model.
-func New(stateMgr *state.Manager) Model {
+func New(stateMgr *state.Manager, ephemProvider ephem.Provider) Model {
+	skyView := NewSkyViewModel()
+	if ephemProvider != nil {
+		skyView = skyView.SetPathProvider(ephemProvider)
+	}
+
 	return Model{
 		state:         stateMgr,
 		viewMode:      ViewDashboard,
 		dashboard:     NewDashboardModel(),
 		missionDetail: NewMissionDetailModel(),
-		skyView:       NewSkyViewModel(),
+		skyView:       skyView,
 	}
 }
 
@@ -295,7 +301,7 @@ func (m Model) renderFooter() string {
 	var help string
 	switch m.viewMode {
 	case ViewSky:
-		help = dimStyle.Render("j/k: focus | l: labels | c: complex")
+		help = dimStyle.Render("j/k: focus | l: labels | c: complex | p: path")
 	default:
 		help = dimStyle.Render("↑↓: navigate | tab: switch view")
 	}

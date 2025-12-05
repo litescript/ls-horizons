@@ -2,45 +2,41 @@
 
 A terminal UI for visualizing NASA's Deep Space Network in real-time.
 
-```
-  ██╗     ███████╗      ██╗  ██╗ ██████╗ ██████╗ ██╗███████╗ ██████╗ ███╗   ██╗███████╗
-  ██║     ██╔════╝      ██║  ██║██╔═══██╗██╔══██╗██║╚══███╔╝██╔═══██╗████╗  ██║██╔════╝
-  ██║     ███████╗█████╗███████║██║   ██║██████╔╝██║  ███╔╝ ██║   ██║██╔██╗ ██║███████╗
-  ██║     ╚════██║╚════╝██╔══██║██║   ██║██╔══██╗██║ ███╔╝  ██║   ██║██║╚██╗██║╚════██║
-  ███████╗███████║      ██║  ██║╚██████╔╝██║  ██║██║███████╗╚██████╔╝██║ ╚████║███████║
-  ╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝
-  Deep Space Network · Real-time Visualization
-
-  ▶ [1] Dashboard    [2] Mission    [3] Sky
-
-  ┌──────────────────────────────────────────────────────────────────────────────────┐
-  │  GOLDSTONE          CANBERRA           MADRID                                    │
-  │  ████████░░ 80%     ██████░░░░ 60%     ████████░░ 80%                            │
-  ├──────────────────────────────────────────────────────────────────────────────────┤
-  │  ANTENNA   SPACECRAFT          BAND   RATE        DISTANCE       HEALTH         │
-  │  DSS-14    Voyager 1           S/X    160 bps     24.5 B km      POOR           │
-  │  DSS-43    Mars Perseverance   X      2.1 Mbps    389 M km       GOOD           │
-  │  DSS-55    Europa Clipper      X      115 kbps    891 M km       GOOD           │
-  │  DSS-34    JWST                Ka     28.6 Mbps   1.5 M km       GOOD           │
-  └──────────────────────────────────────────────────────────────────────────────────┘
-
-  ● 3s ago (127ms)  |  q: quit | tab: switch view | ↑↓: navigate
-```
+![Dashboard View](docs/screenshots/dashboard.png)
 
 ## Features
 
 - **Real-time DSN monitoring** — Live data from NASA's Deep Space Network XML feed
+- **Real star catalog** — 150+ bright stars with accurate J2000 coordinates rendered in the sky view
+- **Astronomical projection** — Proper RA/Dec to Az/El conversion using GMST/LST calculations
+- **JPL Horizons integration** — Trajectory path arcs using ephemeris data from NASA/JPL (in progress)
 - **Three view modes**:
-  - **Dashboard** — Complex utilization bars and active links table
-  - **Mission Detail** — Per-spacecraft deep dive with signal metrics
-  - **Sky View** — Animated globe showing antenna pointings with smooth camera transitions
+  - **Dashboard** — Complex utilization status and active spacecraft table with multi-antenna tracking
+  - **Mission Detail** — Per-spacecraft deep dive with signal metrics and history sparklines
+  - **Sky View** — Animated star field with spacecraft positions and smooth camera transitions
 - **Derived metrics**:
   - Distance calculated from round-trip light time (RTLT)
   - Velocity estimation from RTLT delta
   - "Struggle index" — composite difficulty metric based on distance, data rate, and elevation
-  - Health classification (GOOD / MARGINAL / POOR)
 - **Event detection** — Tracks link handoffs between complexes, new acquisitions, and signal losses
 - **Headless mode** — JSON export and text summaries for scripting and monitoring
+
+## Screenshots
+
+### Dashboard View
+Real-time status of all three DSN complexes with active spacecraft table showing antennas, bands, data rates, distances, and struggle indicators.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+### Mission Detail View
+Deep dive into individual spacecraft with link details, signal history sparklines, and RTLT information.
+
+![Mission Detail](docs/screenshots/mission.png)
+
+### Sky View
+Animated celestial view with real star positions, spacecraft locations, and trajectory path arcs. Smooth camera transitions when cycling between spacecraft.
+
+![Sky View](docs/screenshots/sky-view.png)
 
 ## Installation
 
@@ -70,16 +66,26 @@ ls-horizons
 
 # Custom refresh interval
 ls-horizons --refresh 30s
+
+# Use specific ephemeris source
+ls-horizons --ephem horizons   # JPL Horizons (default)
+ls-horizons --ephem dsn        # DSN-derived only
+ls-horizons --ephem auto       # Horizons with fallback
 ```
 
 **Keybindings:**
+
 | Key | Action |
 |-----|--------|
-| `a` | Dashboard view |
-| `b` | Mission detail view |
-| `c` | Sky view |
-| `j/k` or `↑/↓` | Navigate lists |
-| `space` | Select spacecraft (sky view focus) |
+| `1` or `d` | Dashboard view |
+| `2` or `m` | Mission detail view |
+| `3` or `s` | Sky view |
+| `Tab` | Cycle through views |
+| `j/k` or `↑/↓` | Navigate lists / cycle spacecraft |
+| `l` | Toggle labels (Sky view) |
+| `c` | Cycle complex filter (Sky view) |
+| `p` | Toggle trajectory path (Sky view) |
+| `u` | Check for updates |
 | `q` | Quit |
 
 ### Headless Mode
@@ -121,6 +127,7 @@ ls-horizons --snapshot-path -
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--refresh` | `5s` | Data refresh interval (1s - 5m) |
+| `--ephem` | `auto` | Ephemeris source: `horizons`, `dsn`, or `auto` |
 | `--summary` | `false` | Print text summary instead of TUI |
 | `--mini-sky` | `false` | Show ASCII mini sky view |
 | `--now` | `false` | Single-line now-playing mode |
@@ -132,9 +139,11 @@ ls-horizons --snapshot-path -
 | `--snapshot-path` | `""` | Export JSON to file (`-` for stdout) |
 | `--log-level` | `info` | Log level (debug, info, warn, error) |
 
-## Data Source
+## Data Sources
 
-This tool fetches live data from NASA's publicly available Deep Space Network feed:
+### NASA Deep Space Network
+
+Live telemetry data from NASA's publicly available DSN feed:
 
 ```
 https://eyes.nasa.gov/dsn/data/dsn.xml
@@ -147,26 +156,53 @@ The DSN consists of three antenna complexes positioned roughly 120° apart aroun
 
 This positioning ensures continuous coverage for deep space missions as Earth rotates.
 
+### JPL Horizons
+
+Spacecraft trajectory data from NASA/JPL's Horizons system:
+
+```
+https://ssd.jpl.nasa.gov/api/horizons.api
+```
+
+Used for computing accurate sky positions and trajectory path arcs. Supports 35+ spacecraft with NAIF SPICE ID mappings including Voyager 1/2, JWST, Mars rovers, Juno, New Horizons, and more.
+
+### Yale Bright Star Catalog
+
+Star positions sourced from the Yale Bright Star Catalog and IAU star names. The sky view renders 150+ stars down to magnitude ~4.5, with brightness-based rendering (brighter stars get larger glyphs).
+
 ## Architecture
 
 ```
 cmd/ls-horizons/        Entry point and CLI flags
 internal/
+├── astro/              Astronomical calculations
+│   ├── coords.go       RA/Dec ↔ Az/El transforms, GMST/LST, Julian Date
+│   └── stars.go        Star catalog with 150+ bright stars
 ├── dsn/
 │   ├── models.go       Data structures (Station, Antenna, Link, etc.)
 │   ├── parser.go       XML feed parsing
 │   ├── fetcher.go      HTTP client with retry logic
 │   ├── derive.go       Distance, velocity, struggle index calculations
+│   ├── spacecraft.go   Spacecraft catalog with mission metadata
+│   ├── spacecraft_view.go  Multi-antenna tracking abstraction
+│   ├── observer.go     DSN complex observer locations
 │   └── export.go       JSON and text export
+├── ephem/              Ephemeris providers
+│   ├── provider.go     EphemerisProvider interface
+│   ├── horizons.go     JPL Horizons API client
+│   ├── dsn_provider.go DSN-derived fallback
+│   └── targets.go      NAIF SPICE ID mappings
 ├── state/
 │   └── state.go        Thread-safe state manager with history buffers
 ├── ui/
-│   ├── model.go        Bubble Tea main model
+│   ├── ui.go           Bubble Tea main model
 │   ├── dashboard.go    Dashboard view
 │   ├── mission.go      Mission detail view
-│   └── sky_view.go     Animated sky projection view
-└── logging/
-    └── logging.go      Structured logging
+│   └── sky_view.go     Sky projection with braille arc rendering
+├── logging/
+│   └── logging.go      Structured logging
+└── version/
+    └── version.go      Version and update checking
 ```
 
 ## Why "ls-horizons"?
@@ -179,7 +215,7 @@ Contributions welcome! Please:
 
 1. Fork the repository
 2. Create a feature branch
-3. Run tests: `go test ./...` and `go test -race ./...`
+3. Run tests: `go test ./...` and `go vet ./...`
 4. Submit a pull request
 
 ## License
@@ -188,6 +224,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- NASA/JPL for the public DSN data feed
+- NASA/JPL for the public DSN data feed and Horizons ephemeris system
+- Yale Bright Star Catalog for star position data
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the excellent TUI framework
 - [Lip Gloss](https://github.com/charmbracelet/lipgloss) for terminal styling
