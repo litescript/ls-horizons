@@ -501,7 +501,7 @@ func (m DashboardModel) renderStruggleBar(struggle float64) string {
 	}
 	empty := barWidth - filled
 
-	fillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#d0c8ff")) // light purple
+	fillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#d0c8ff"))  // light purple
 	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3a3a4a")) // dim gray
 
 	filledPart := fillStyle.Render(strings.Repeat("█", filled))

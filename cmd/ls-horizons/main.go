@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/ephem"
 	"github.com/litescript/ls-horizons/internal/logging"
 	"github.com/litescript/ls-horizons/internal/state"
 	"github.com/litescript/ls-horizons/internal/ui"
@@ -30,6 +31,7 @@ var (
 	diffMode      bool
 	beepMode      bool
 	eventsMode    bool
+	ephemMode     string
 )
 
 const (
@@ -51,6 +53,7 @@ func main() {
 	flag.BoolVar(&diffMode, "diff", false, "Show only changes between fetches")
 	flag.BoolVar(&beepMode, "beep", false, "Beep on important events (TTY only)")
 	flag.BoolVar(&eventsMode, "events", false, "Show event log")
+	flag.StringVar(&ephemMode, "ephem", "auto", "Ephemeris source: horizons, dsn, or auto")
 	flag.Parse()
 
 	// Validate refresh interval
@@ -89,8 +92,24 @@ func main() {
 		return
 	}
 
-	// Create TUI model
-	model := ui.New(stateMgr)
+	// Create ephemeris provider based on mode
+	var ephemProvider ephem.Provider
+	mode := ephem.ParseMode(ephemMode)
+	switch mode {
+	case ephem.ModeHorizons:
+		ephemProvider = ephem.NewHorizonsProvider()
+		logger.Info("Using JPL Horizons ephemeris")
+	case ephem.ModeDSN:
+		ephemProvider = ephem.NewDSNProvider()
+		logger.Info("Using DSN-derived ephemeris")
+	case ephem.ModeAuto:
+		// Try Horizons, will fall back gracefully if unavailable
+		ephemProvider = ephem.NewHorizonsProvider()
+		logger.Info("Using auto ephemeris mode (Horizons with fallback)")
+	}
+
+	// Create TUI model with ephemeris provider
+	model := ui.New(stateMgr, ephemProvider)
 
 	// Create Bubble Tea program
 	p := tea.NewProgram(model, tea.WithAltScreen())
