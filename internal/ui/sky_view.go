@@ -9,8 +9,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/peter/ls-horizons/internal/dsn"
-	"github.com/peter/ls-horizons/internal/state"
+	"github.com/litescript/ls-horizons/internal/astro"
+	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/state"
 )
 
 const (
@@ -21,6 +22,35 @@ const (
 	// Animation
 	animDuration  = 400 * time.Millisecond
 	animFrameRate = 30 * time.Millisecond
+
+	// Spacecraft glyphs
+	glyphSpacecraft        = '✦'
+	glyphSpacecraftFocused = '◆'
+
+	// Spacecraft colors
+	colorSpacecraft        = "#d0c8ff"
+	colorSpacecraftFocused = "229" // bright gold
+
+	// Star glyphs by magnitude
+	glyphStarBright   = '✶' // mag < 1.5
+	glyphStarMedium   = '✸' // mag 1.5-3.0
+	glyphStarDim      = '·' // mag 3.0-4.0
+	glyphStarVeryDim  = '·' // mag > 4.0
+
+	// Star colors (grayscale to not compete with spacecraft)
+	colorStarBright  = "255" // bright white
+	colorStarMedium  = "250" // medium gray
+	colorStarDim     = "244" // dim gray
+	colorStarVeryDim = "240" // very dim gray
+)
+
+// LabelMode controls how spacecraft labels are displayed.
+type LabelMode int
+
+const (
+	LabelNone    LabelMode = iota // No labels
+	LabelFocused                  // Only focused spacecraft
+	LabelAll                      // All spacecraft
 )
 
 // SkyViewModel renders the sky dome with spacecraft positions.
@@ -40,19 +70,27 @@ type SkyViewModel struct {
 	animTargEl  float64
 	animStart   time.Time
 
-	// Focus
+	// Focus - now operates on spacecraft, not individual links
 	focusIdx   int
-	skyObjects []dsn.SkyObject
+	spacecraft []dsn.SpacecraftView // grouped spacecraft with their links
 
 	// Selected complex filter (empty = all)
 	complex dsn.Complex
+
+	// Label display mode
+	labelMode LabelMode
+
+	// Star catalog (loaded once)
+	starCatalog astro.StarCatalog
 }
 
 // NewSkyViewModel creates a new sky view model.
 func NewSkyViewModel() SkyViewModel {
 	return SkyViewModel{
-		camAz: 180,
-		camEl: 45,
+		camAz:       180,
+		camEl:       45,
+		labelMode:   LabelFocused, // default to showing focused spacecraft label
+		starCatalog: astro.DefaultStarCatalog(),
 	}
 }
 
@@ -65,18 +103,20 @@ func (m SkyViewModel) SetSize(width, height int) SkyViewModel {
 
 // UpdateData updates with new data snapshot.
 func (m SkyViewModel) UpdateData(snapshot state.Snapshot) SkyViewModel {
-	m.skyObjects = snapshot.SkyObjects
+	// Build spacecraft views (grouped, filtered)
+	elevMap := dsn.BuildElevationMap(snapshot.Data)
+	m.spacecraft = dsn.BuildSpacecraftViews(snapshot.Data, elevMap)
 
 	// If focus is out of bounds, reset
-	if m.focusIdx >= len(m.skyObjects) {
+	if m.focusIdx >= len(m.spacecraft) {
 		m.focusIdx = 0
 	}
 
-	// If not animating, snap camera to focused object
-	if !m.animating && len(m.skyObjects) > 0 && m.focusIdx < len(m.skyObjects) {
-		obj := m.skyObjects[m.focusIdx]
-		m.camAz = obj.Azimuth
-		m.camEl = obj.Elevation
+	// If not animating, snap camera to focused spacecraft
+	if !m.animating && len(m.spacecraft) > 0 && m.focusIdx < len(m.spacecraft) {
+		coord := m.spacecraft[m.focusIdx].Coord()
+		m.camAz = coord.AzDeg
+		m.camEl = coord.ElDeg
 	}
 
 	return m
@@ -84,25 +124,29 @@ func (m SkyViewModel) UpdateData(snapshot state.Snapshot) SkyViewModel {
 
 // SyncFromDashboard initializes sky view focus from dashboard selection.
 func (m SkyViewModel) SyncFromDashboard(dash DashboardModel, snapshot state.Snapshot) SkyViewModel {
-	m.skyObjects = snapshot.SkyObjects
+	// Build spacecraft views (grouped, filtered)
+	elevMap := dsn.BuildElevationMap(snapshot.Data)
+	m.spacecraft = dsn.BuildSpacecraftViews(snapshot.Data, elevMap)
 
 	// Try to find the spacecraft selected in dashboard
-	if link := dash.GetSelectedLink(); link != nil {
-		for i, obj := range m.skyObjects {
-			if obj.Spacecraft == link.Spacecraft && obj.AntennaID == link.AntennaID {
+	if sv := dash.GetSelectedSpacecraft(); sv != nil {
+		for i, sc := range m.spacecraft {
+			if sc.Code == sv.Code {
 				m.focusIdx = i
-				m.camAz = obj.Azimuth
-				m.camEl = obj.Elevation
+				coord := sc.Coord()
+				m.camAz = coord.AzDeg
+				m.camEl = coord.ElDeg
 				return m
 			}
 		}
 	}
 
-	// Default to first object
-	if len(m.skyObjects) > 0 {
+	// Default to first spacecraft
+	if len(m.spacecraft) > 0 {
 		m.focusIdx = 0
-		m.camAz = m.skyObjects[0].Azimuth
-		m.camEl = m.skyObjects[0].Elevation
+		coord := m.spacecraft[0].Coord()
+		m.camAz = coord.AzDeg
+		m.camEl = coord.ElDeg
 	}
 	return m
 }
@@ -121,10 +165,13 @@ func (m SkyViewModel) Update(msg tea.Msg) (SkyViewModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "left", "h":
+		case "up", "k":
 			return m.focusPrev()
-		case "right", "l":
+		case "down", "j":
 			return m.focusNext()
+		case "l":
+			// Cycle label mode
+			m = m.cycleLabelMode()
 		case "c":
 			// Cycle complex filter
 			m = m.cycleComplex()
@@ -139,36 +186,41 @@ func (m SkyViewModel) Update(msg tea.Msg) (SkyViewModel, tea.Cmd) {
 	return m, nil
 }
 
+func (m SkyViewModel) cycleLabelMode() SkyViewModel {
+	m.labelMode = (m.labelMode + 1) % 3
+	return m
+}
+
 func (m SkyViewModel) focusNext() (SkyViewModel, tea.Cmd) {
-	if len(m.skyObjects) == 0 {
+	if len(m.spacecraft) == 0 {
 		return m, nil
 	}
-	m.focusIdx = (m.focusIdx + 1) % len(m.skyObjects)
+	m.focusIdx = (m.focusIdx + 1) % len(m.spacecraft)
 	return m.startAnimation()
 }
 
 func (m SkyViewModel) focusPrev() (SkyViewModel, tea.Cmd) {
-	if len(m.skyObjects) == 0 {
+	if len(m.spacecraft) == 0 {
 		return m, nil
 	}
 	m.focusIdx--
 	if m.focusIdx < 0 {
-		m.focusIdx = len(m.skyObjects) - 1
+		m.focusIdx = len(m.spacecraft) - 1
 	}
 	return m.startAnimation()
 }
 
 func (m SkyViewModel) startAnimation() (SkyViewModel, tea.Cmd) {
-	if len(m.skyObjects) == 0 || m.focusIdx >= len(m.skyObjects) {
+	if len(m.spacecraft) == 0 || m.focusIdx >= len(m.spacecraft) {
 		return m, nil
 	}
 
-	target := m.skyObjects[m.focusIdx]
+	coord := m.spacecraft[m.focusIdx].Coord()
 	m.animating = true
 	m.animStartAz = m.camAz
 	m.animStartEl = m.camEl
-	m.animTargAz = target.Azimuth
-	m.animTargEl = target.Elevation
+	m.animTargAz = coord.AzDeg
+	m.animTargEl = coord.ElDeg
 	m.animStart = time.Now()
 
 	return m, animTick()
@@ -237,59 +289,145 @@ func (m SkyViewModel) View() string {
 func (m SkyViewModel) renderHeader() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("135")) // violet
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("60"))               // muted purple
+	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(colorSpacecraft)) // soft purple
 
 	title := titleStyle.Render("Sky View")
 
-	complexFilter := "All Complexes"
-	if m.complex != "" {
+	// Complex filter
+	complexStr := ""
+	if m.complex == "" {
+		complexStr = dimStyle.Render("All Complexes")
+	} else {
 		info := dsn.KnownComplexes[m.complex]
-		complexFilter = info.Name
+		complexStr = accentStyle.Render(info.Name)
 	}
 
-	compass := fmt.Sprintf("Az: %.0f° El: %.0f°", m.camAz, m.camEl)
-	help := dimStyle.Render("←/→: focus | c: complex | d: dashboard | q: quit")
+	// Label mode indicator
+	var labelStr string
+	switch m.labelMode {
+	case LabelNone:
+		labelStr = dimStyle.Render("Labels: off")
+	case LabelFocused:
+		labelStr = accentStyle.Render("Labels: focus")
+	case LabelAll:
+		labelStr = accentStyle.Render("Labels: all")
+	}
 
-	return fmt.Sprintf("%s  |  %s  |  %s  |  %s", title, complexFilter, compass, help)
+	compass := dimStyle.Render(fmt.Sprintf("Az:%.0f° El:%.0f°", m.camAz, m.camEl))
+
+	return fmt.Sprintf("%s | %s | %s | %s", title, complexStr, labelStr, compass)
 }
 
 func (m SkyViewModel) renderStatus() string {
-	if len(m.skyObjects) == 0 {
+	if len(m.spacecraft) == 0 {
 		return "No spacecraft in view"
 	}
 
-	if m.focusIdx >= len(m.skyObjects) {
+	if m.focusIdx >= len(m.spacecraft) {
 		return ""
 	}
 
-	obj := m.skyObjects[m.focusIdx]
-	status := fmt.Sprintf(">>> %s @ %s [%s] | Az:%.0f° El:%.0f° | %s | Struggle: %.0f%%",
-		obj.Spacecraft,
-		obj.AntennaID,
-		obj.Band,
-		obj.Azimuth,
-		obj.Elevation,
-		dsn.FormatDistance(obj.Distance),
-		obj.StruggleIndex*100,
+	sc := m.spacecraft[m.focusIdx]
+	coord := sc.Coord()
+	primary := sc.PrimaryLink
+
+	// Build antenna list (e.g., "DSS34+DSS36")
+	antennaList := sc.AntennaList()
+
+	// First line: code @ antenna(s) with signal info from primary link
+	band := primary.Band
+	if band == "" {
+		band = "-"
+	}
+
+	line1 := fmt.Sprintf(">>> %s @ %s [%s] | Az:%.0f° El:%.0f° | %s | Struggle: %.0f%%",
+		sc.Code,
+		antennaList,
+		band,
+		coord.AzDeg,
+		coord.ElDeg,
+		dsn.FormatDistance(primary.DistanceKm),
+		primary.Struggle*100,
 	)
 
-	return lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Render(status)
+	// Style the first line in gold
+	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
+	status := accentStyle.Render(line1)
+
+	// Second line: full mission name (if known and different from code)
+	if sc.Name != sc.Code {
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(colorSpacecraft))
+		status += "\n" + dimStyle.Render("    "+sc.Name)
+	}
+
+	return status
+}
+
+// spacecraftPos tracks spacecraft position for label rendering
+type spacecraftPos struct {
+	x, y       int
+	name       string
+	isFocused  bool
+	labelStart int // calculated label start position
+	labelEnd   int // calculated label end position
+}
+
+// getObserver returns the observer location based on the focused spacecraft's complex.
+// Defaults to Goldstone if no spacecraft is focused.
+func (m SkyViewModel) getObserver() astro.Observer {
+	if len(m.spacecraft) > 0 && m.focusIdx < len(m.spacecraft) {
+		primary := m.spacecraft[m.focusIdx].PrimaryLink
+		return dsn.ObserverForComplex(primary.Complex)
+	}
+	return dsn.ObserverForComplex(dsn.ComplexGoldstone)
 }
 
 func (m SkyViewModel) renderSkyCanvas(width, height int) string {
-	// Initialize canvas with starfield (space colors: deep blues/purples)
+	// Initialize canvas with empty space (very dark background)
 	canvas := make([][]rune, height)
 	colors := make([][]lipgloss.Color, height)
 	for y := 0; y < height; y++ {
 		canvas[y] = make([]rune, width)
 		colors[y] = make([]lipgloss.Color, width)
 		for x := 0; x < width; x++ {
-			canvas[y][x] = m.starfieldChar(x, y)
-			colors[y][x] = m.starfieldColor(x, y)
+			canvas[y][x] = ' '
+			colors[y][x] = "236" // very dark background
 		}
 	}
 
-	// Draw horizon line (purple tint)
+	// Draw real stars from catalog
 	horizonY := height - 2
+	observer := m.getObserver()
+	now := time.Now()
+
+	for _, star := range m.starCatalog.Stars {
+		// Convert RA/Dec to Az/El for current observer and time
+		eq := astro.SkyCoord{RAdeg: star.RAdeg, DecDeg: star.DecDeg}
+		horiz := astro.EquatorialToHorizontal(eq, observer, now)
+
+		// Skip stars below horizon
+		if horiz.ElDeg <= 0 {
+			continue
+		}
+
+		// Project to screen
+		x, y, visible := m.projectToScreen(horiz.AzDeg, horiz.ElDeg, width, height)
+		if !visible {
+			continue
+		}
+
+		// Clamp to canvas bounds (above horizon line)
+		if x < 0 || x >= width || y < 0 || y >= horizonY {
+			continue
+		}
+
+		// Choose glyph and color based on magnitude
+		glyph, color := m.starGlyph(star.Mag)
+		canvas[y][x] = glyph
+		colors[y][x] = color
+	}
+
+	// Draw horizon line (purple tint)
 	for x := 0; x < width; x++ {
 		canvas[horizonY][x] = '─'
 		colors[horizonY][x] = "60" // muted purple
@@ -301,14 +439,18 @@ func (m SkyViewModel) renderSkyCanvas(width, height int) string {
 	m.drawCardinal(canvas, colors, width, height, "S", 180)
 	m.drawCardinal(canvas, colors, width, height, "W", 270)
 
-	// Draw spacecraft
-	for i, obj := range m.skyObjects {
-		// Filter by complex if set
-		if m.complex != "" && obj.Complex != m.complex {
+	// Collect spacecraft positions for label rendering
+	var positions []spacecraftPos
+
+	// Draw spacecraft (one glyph per spacecraft, using primary link position)
+	for i, sc := range m.spacecraft {
+		// Filter by complex if set (check primary link's complex)
+		if m.complex != "" && sc.PrimaryLink.Complex != m.complex {
 			continue
 		}
 
-		x, y, visible := m.projectToScreen(obj.Azimuth, obj.Elevation, width, height)
+		coord := sc.Coord()
+		x, y, visible := m.projectToScreenCoord(coord, width, height)
 		if !visible {
 			continue
 		}
@@ -318,27 +460,31 @@ func (m SkyViewModel) renderSkyCanvas(width, height int) string {
 			continue
 		}
 
-		// Choose symbol and color (nebula palette)
-		sym := '●'
-		color := lipgloss.Color("69") // soft blue default
+		isFocused := i == m.focusIdx
 
-		switch obj.Band {
-		case "X":
-			color = "75" // sky blue
-		case "S":
-			color = "141" // soft purple
-		case "Ka":
-			color = "212" // pink
-		}
+		// Choose symbol and color
+		sym := glyphSpacecraft
+		color := lipgloss.Color(colorSpacecraft)
 
-		if i == m.focusIdx {
-			sym = '◆'
-			color = "229" // bright gold for focused
+		if isFocused {
+			sym = glyphSpacecraftFocused
+			color = colorSpacecraftFocused
 		}
 
 		canvas[y][x] = sym
 		colors[y][x] = color
+
+		// Track position for labels
+		positions = append(positions, spacecraftPos{
+			x:         x,
+			y:         y,
+			name:      sc.Code,
+			isFocused: isFocused,
+		})
 	}
+
+	// Draw labels based on label mode
+	m.renderLabels(canvas, colors, width, horizonY, positions)
 
 	// Draw station marker at bottom center
 	stationX := width / 2
@@ -363,32 +509,102 @@ func (m SkyViewModel) renderSkyCanvas(width, height int) string {
 	return b.String()
 }
 
-func (m SkyViewModel) starfieldChar(x, y int) rune {
-	// Simple deterministic starfield
-	hash := (x*31 + y*17) % 100
-	switch {
-	case hash < 2:
-		return '·'
-	case hash < 3:
-		return '+'
-	case hash < 4:
-		return '*'
-	default:
-		return ' '
+// renderLabels draws spacecraft labels on the canvas based on label mode.
+// Focused spacecraft labels take priority in overlapping regions.
+func (m SkyViewModel) renderLabels(canvas [][]rune, colors [][]lipgloss.Color, width, horizonY int, positions []spacecraftPos) {
+	if m.labelMode == LabelNone || len(positions) == 0 {
+		return
+	}
+
+	// Calculate label positions (to the right of spacecraft glyph with 1-char gap)
+	for i := range positions {
+		pos := &positions[i]
+		// Label starts 2 chars after glyph (1 space gap)
+		pos.labelStart = pos.x + 2
+		// Focused labels have "► " prefix (2 extra chars)
+		labelLen := len(pos.name)
+		if pos.isFocused {
+			labelLen += 2
+		}
+		pos.labelEnd = pos.labelStart + labelLen
+	}
+
+	// Track which x positions on each row are claimed by focused labels
+	// This allows focused labels to "win" over non-focused ones
+	focusedClaims := make(map[int]map[int]bool) // y -> x -> claimed
+
+	// First pass: mark positions claimed by focused spacecraft
+	for _, pos := range positions {
+		if !pos.isFocused {
+			continue
+		}
+		if focusedClaims[pos.y] == nil {
+			focusedClaims[pos.y] = make(map[int]bool)
+		}
+		for x := pos.labelStart; x < pos.labelEnd; x++ {
+			focusedClaims[pos.y][x] = true
+		}
+	}
+
+	// Second pass: render labels
+	for _, pos := range positions {
+		// Check if we should render this label
+		showLabel := false
+		switch m.labelMode {
+		case LabelFocused:
+			showLabel = pos.isFocused
+		case LabelAll:
+			showLabel = true
+		}
+
+		if !showLabel {
+			continue
+		}
+
+		// Render label character by character
+		labelColor := lipgloss.Color(colorSpacecraft)
+		if pos.isFocused {
+			labelColor = colorSpacecraftFocused
+		}
+
+		// Add arrow prefix for focused spacecraft: "◄ NAME" (points to spacecraft)
+		labelText := pos.name
+		if pos.isFocused {
+			labelText = "◄ " + pos.name
+		}
+
+		labelRunes := []rune(labelText)
+		for i, r := range labelRunes {
+			x := pos.labelStart + i
+
+			// Skip if out of bounds
+			if x < 0 || x >= width || pos.y < 0 || pos.y >= horizonY {
+				continue
+			}
+
+			// For non-focused labels, skip if position is claimed by focused
+			if !pos.isFocused && focusedClaims[pos.y][x] {
+				continue
+			}
+
+			canvas[pos.y][x] = r
+			colors[pos.y][x] = labelColor
+		}
 	}
 }
 
-func (m SkyViewModel) starfieldColor(x, y int) lipgloss.Color {
-	hash := (x*31 + y*17) % 100
+// starGlyph returns the appropriate glyph and color for a star based on its magnitude.
+// Brighter stars (lower magnitude) get more prominent symbols.
+func (m SkyViewModel) starGlyph(mag float64) (rune, lipgloss.Color) {
 	switch {
-	case hash < 2:
-		return "63" // blue-purple
-	case hash < 3:
-		return "141" // lavender
-	case hash < 4:
-		return "183" // pink-white
+	case mag < 1.5:
+		return glyphStarBright, colorStarBright
+	case mag < 3.0:
+		return glyphStarMedium, colorStarMedium
+	case mag < 4.0:
+		return glyphStarDim, colorStarDim
 	default:
-		return "236" // very dark (background)
+		return glyphStarVeryDim, colorStarVeryDim
 	}
 }
 
@@ -403,6 +619,13 @@ func (m SkyViewModel) drawCardinal(canvas [][]rune, colors [][]lipgloss.Color, w
 		canvas[y][x] = rune(label[0])
 		colors[y][x] = "252"
 	}
+}
+
+// projectToScreenCoord converts a SkyCoord to screen coordinates.
+// This is the primary projection interface - takes SkyCoord for future-proofing
+// when we add JPL Horizons support.
+func (m SkyViewModel) projectToScreenCoord(coord dsn.SkyCoord, width, height int) (int, int, bool) {
+	return m.projectToScreen(coord.AzDeg, coord.ElDeg, width, height)
 }
 
 // projectToScreen converts az/el to screen coordinates relative to camera

@@ -9,9 +9,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/peter/ls-horizons/internal/dsn"
-	"github.com/peter/ls-horizons/internal/state"
-	"github.com/peter/ls-horizons/internal/version"
+	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/state"
+	"github.com/litescript/ls-horizons/internal/version"
 )
 
 // ViewMode represents the current UI view.
@@ -278,8 +278,12 @@ func (m Model) renderFooter() string {
 	if m.snapshot.LastError != nil {
 		status = errorStyle.Render("ERROR: " + m.snapshot.LastError.Error())
 	} else if !m.snapshot.LastFetch.IsZero() {
-		ago := time.Since(m.snapshot.LastFetch).Round(time.Second)
-		status = accentStyle.Render("●") + dimStyle.Render(" "+ago.String()+" ago")
+		// Show countdown to next refresh
+		countdown := time.Until(m.snapshot.NextRefresh).Round(time.Second)
+		if countdown < 0 {
+			countdown = 0
+		}
+		status = accentStyle.Render("●") + dimStyle.Render(fmt.Sprintf(" refresh in %ds", int(countdown.Seconds())))
 		if m.snapshot.FetchDuration > 0 {
 			status += dimStyle.Render(" (" + m.snapshot.FetchDuration.Round(time.Millisecond).String() + ")")
 		}
@@ -287,7 +291,14 @@ func (m Model) renderFooter() string {
 		status = dimStyle.Render("◌ Waiting for data...")
 	}
 
-	help := dimStyle.Render("q: quit | tab: switch view | ↑↓: navigate")
+	// View-specific help hints
+	var help string
+	switch m.viewMode {
+	case ViewSky:
+		help = dimStyle.Render("j/k: focus | l: labels | c: complex")
+	default:
+		help = dimStyle.Render("↑↓: navigate | tab: switch view")
+	}
 
 	footer := "  " + status + "  " + dimStyle.Render("|") + "  " + help
 

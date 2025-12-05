@@ -10,8 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/peter/ls-horizons/internal/dsn"
-	"github.com/peter/ls-horizons/internal/state"
+	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/state"
 )
 
 // Styles for the dashboard
@@ -51,11 +51,12 @@ var (
 
 // DashboardModel is the control room dashboard view.
 type DashboardModel struct {
-	width    int
-	height   int
-	cursor   int
-	snapshot state.Snapshot
-	lastErr  error
+	width      int
+	height     int
+	cursor     int
+	snapshot   state.Snapshot
+	spacecraft []dsn.SpacecraftView // grouped spacecraft with their links
+	lastErr    error
 }
 
 // NewDashboardModel creates a new dashboard model.
@@ -78,6 +79,16 @@ func (m DashboardModel) SetSize(width, height int) DashboardModel {
 // UpdateData updates the model with new data.
 func (m DashboardModel) UpdateData(snapshot state.Snapshot) DashboardModel {
 	m.snapshot = snapshot
+
+	// Build spacecraft views (grouped, filtered)
+	elevMap := dsn.BuildElevationMap(snapshot.Data)
+	m.spacecraft = dsn.BuildSpacecraftViews(snapshot.Data, elevMap)
+
+	// Clamp cursor to valid range
+	if m.cursor >= len(m.spacecraft) {
+		m.cursor = max(0, len(m.spacecraft)-1)
+	}
+
 	return m
 }
 
@@ -91,10 +102,7 @@ func (m DashboardModel) SetError(err error) DashboardModel {
 func (m DashboardModel) Update(msg tea.Msg) (DashboardModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		linkCount := 0
-		if m.snapshot.Data != nil {
-			linkCount = len(m.snapshot.Data.Links)
-		}
+		scCount := len(m.spacecraft)
 
 		switch msg.String() {
 		case "up", "k":
@@ -102,14 +110,14 @@ func (m DashboardModel) Update(msg tea.Msg) (DashboardModel, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < linkCount-1 {
+			if m.cursor < scCount-1 {
 				m.cursor++
 			}
 		case "home":
 			m.cursor = 0
 		case "end":
-			if linkCount > 0 {
-				m.cursor = linkCount - 1
+			if scCount > 0 {
+				m.cursor = scCount - 1
 			}
 		}
 	}
@@ -345,91 +353,127 @@ func (m DashboardModel) renderUtilizationBar(util float64, width int) string {
 
 // Column widths for table alignment
 const (
-	colStation    = 8
-	colAntenna    = 7
-	colSpacecraft = 12
-	colBand       = 6
-	colRate       = 10
-	colDistance   = 11
-	colStruggle   = 8
+	colAntenna  = 7
+	colBand     = 4
+	colRate     = 10
+	colDistance = 11
+	colStruggle = 8
 )
+
+// renderColumnHeader renders the column labels for the antenna detail rows.
+func (m DashboardModel) renderColumnHeader() string {
+	// Align with bullet rows: "  • " prefix (4 chars) then columns
+	line := fmt.Sprintf("    %s  %s  %s  %s  %s",
+		pad("Station", colAntenna),
+		pad("Band", colBand),
+		pad("Rate", colRate),
+		pad("Distance", colDistance),
+		"Struggle",
+	)
+	return headerStyle.Render(line)
+}
 
 func (m DashboardModel) renderLinksTable() string {
 	var b strings.Builder
 
-	b.WriteString(titleStyle.Render("Active Links"))
+	b.WriteString(titleStyle.Render("Active Spacecraft"))
 	b.WriteString("\n")
 
-	// Table header
-	header := pad("Station", colStation) + " " +
-		pad("Antenna", colAntenna) + " " +
-		pad("Spacecraft", colSpacecraft) + " " +
-		pad("Band", colBand) + " " +
-		pad("Rate", colRate) + " " +
-		pad("Distance", colDistance) + " " +
-		pad("Struggle", colStruggle)
-	b.WriteString(headerStyle.Render(header))
-	b.WriteString("\n")
-
-	if m.snapshot.Data == nil || len(m.snapshot.Data.Links) == 0 {
-		b.WriteString("  No active links\n")
+	if len(m.spacecraft) == 0 {
+		b.WriteString("  No active spacecraft\n")
 		return b.String()
 	}
 
-	// Build antenna elevation map for struggle index
-	elevationMap := m.buildElevationMap()
+	// Column header row
+	b.WriteString(m.renderColumnHeader())
+	b.WriteString("\n")
 
-	// Calculate visible rows based on height
-	maxRows := m.height - 10 // Leave room for header and summary
-	if maxRows < 5 {
-		maxRows = 5
+	// Calculate visible spacecraft based on height
+	// Each spacecraft takes 1 header line + N link lines
+	maxSpacecraft := m.height - 10
+	if maxSpacecraft < 3 {
+		maxSpacecraft = 3
 	}
 
-	links := m.snapshot.Data.Links
 	startIdx := 0
-	if m.cursor >= maxRows {
-		startIdx = m.cursor - maxRows + 1
+	if m.cursor >= maxSpacecraft {
+		startIdx = m.cursor - maxSpacecraft + 1
 	}
 
-	endIdx := startIdx + maxRows
-	if endIdx > len(links) {
-		endIdx = len(links)
+	endIdx := startIdx + maxSpacecraft
+	if endIdx > len(m.spacecraft) {
+		endIdx = len(m.spacecraft)
 	}
 
 	for i := startIdx; i < endIdx; i++ {
-		link := links[i]
+		sc := m.spacecraft[i]
+		isSelected := i == m.cursor
 
-		// Get elevation for struggle index
-		elevation := elevationMap[link.AntennaID]
-		struggle := dsn.StruggleIndex(link, elevation)
-
-		band := link.Band
-		if band == "" {
-			band = "-"
-		}
-
-		row := pad(string(link.Complex), colStation) + " " +
-			pad(link.AntennaID, colAntenna) + " " +
-			pad(link.Spacecraft, colSpacecraft) + " " +
-			pad(band, colBand) + " " +
-			pad(dsn.FormatDataRate(link.DataRate), colRate) + " " +
-			pad(dsn.FormatDistance(link.Distance), colDistance) + " " +
-			m.renderStruggleBar(struggle)
-
-		if i == m.cursor {
-			b.WriteString(selectedRowStyle.Render(row))
-		} else {
-			b.WriteString(rowStyle.Render(row))
-		}
+		// Spacecraft header row
+		headerLine := m.renderSpacecraftHeader(sc, isSelected)
+		b.WriteString(headerLine)
 		b.WriteString("\n")
+
+		// Per-antenna detail lines
+		for _, link := range sc.Links {
+			detailLine := m.renderLinkDetail(link, isSelected)
+			b.WriteString(detailLine)
+			b.WriteString("\n")
+		}
 	}
 
 	// Scroll indicator
-	if len(links) > maxRows {
-		b.WriteString(fmt.Sprintf("\n  Showing %d-%d of %d links", startIdx+1, endIdx, len(links)))
+	if len(m.spacecraft) > maxSpacecraft {
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("60"))
+		b.WriteString(dimStyle.Render(fmt.Sprintf("\n  Showing %d-%d of %d spacecraft", startIdx+1, endIdx, len(m.spacecraft))))
 	}
 
 	return b.String()
+}
+
+// renderSpacecraftHeader renders the header line for a spacecraft.
+func (m DashboardModel) renderSpacecraftHeader(sc dsn.SpacecraftView, selected bool) string {
+	// Format: "VGR2  Voyager 2" or just "JWST  James Webb Space Telescope"
+	name := sc.Name
+	if name == sc.Code {
+		name = "" // Don't repeat if same
+	}
+
+	var line string
+	if name != "" {
+		line = fmt.Sprintf("%s  %s", sc.Code, name)
+	} else {
+		line = sc.Code
+	}
+
+	if selected {
+		return selectedRowStyle.Render("▶ " + line)
+	}
+	return missionStyle.Render("  " + line)
+}
+
+// renderLinkDetail renders a single antenna link line.
+func (m DashboardModel) renderLinkDetail(link dsn.LinkView, selected bool) string {
+	band := link.Band
+	if band == "" {
+		band = "-"
+	}
+
+	// Format: "  • DSS34   X   344 bps   21.3 B km   ▃▃▃▃▃"
+	line := fmt.Sprintf("  • %s  %s  %s  %s  %s",
+		pad(link.Station, colAntenna),
+		pad(band, colBand),
+		pad(dsn.FormatDataRate(link.Rate), colRate),
+		pad(dsn.FormatDistance(link.DistanceKm), colDistance),
+		m.renderStruggleBar(link.Struggle),
+	)
+
+	if selected {
+		// Slightly dimmer than header but still highlighted
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color("223"))
+		return style.Render(line)
+	}
+	return stationStyle.Render(line)
 }
 
 func (m DashboardModel) buildElevationMap() map[string]float64 {
@@ -446,41 +490,35 @@ func (m DashboardModel) buildElevationMap() map[string]float64 {
 }
 
 func (m DashboardModel) renderStruggleBar(struggle float64) string {
-	// 5-char bar: ▁▂▃▄▅▆▇█
-	chars := []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
-	idx := int(struggle * float64(len(chars)-1))
-	if idx >= len(chars) {
-		idx = len(chars) - 1
+	// 5-char fill-style bar: ███░░
+	const barWidth = 5
+	filled := int(struggle * float64(barWidth))
+	if filled > barWidth {
+		filled = barWidth
 	}
-	if idx < 0 {
-		idx = 0
+	if filled < 0 {
+		filled = 0
 	}
+	empty := barWidth - filled
 
-	// Color based on struggle
-	var style lipgloss.Style
-	switch {
-	case struggle >= 0.7:
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // red
-	case struggle >= 0.4:
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // yellow
-	default:
-		style = lipgloss.NewStyle().Foreground(lipgloss.Color("46")) // green
-	}
+	fillStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#d0c8ff")) // light purple
+	emptyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#3a3a4a")) // dim gray
 
-	bar := strings.Repeat(string(chars[idx]), 5)
-	return style.Render(bar)
+	filledPart := fillStyle.Render(strings.Repeat("█", filled))
+	emptyPart := emptyStyle.Render(strings.Repeat("░", empty))
+
+	return filledPart + emptyPart
 }
 
-// GetSelectedLink returns the currently selected link, if any.
-func (m DashboardModel) GetSelectedLink() *dsn.Link {
-	if m.snapshot.Data == nil || len(m.snapshot.Data.Links) == 0 {
+// GetSelectedSpacecraft returns the currently selected spacecraft, if any.
+func (m DashboardModel) GetSelectedSpacecraft() *dsn.SpacecraftView {
+	if len(m.spacecraft) == 0 {
 		return nil
 	}
-	if m.cursor < 0 || m.cursor >= len(m.snapshot.Data.Links) {
+	if m.cursor < 0 || m.cursor >= len(m.spacecraft) {
 		return nil
 	}
-	link := m.snapshot.Data.Links[m.cursor]
-	return &link
+	return &m.spacecraft[m.cursor]
 }
 
 func truncate(s string, maxLen int) string {

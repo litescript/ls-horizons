@@ -130,3 +130,46 @@ func TestProjectToScreen_CenterIsCenter(t *testing.T) {
 		t.Errorf("center y = %d, expected in middle region", y)
 	}
 }
+
+// Note: filterSkyObjects was removed in favor of dsn.BuildSpacecraftViews
+// which handles filtering. See dsn/spacecraft_view_test.go for those tests.
+
+func TestCycleLabelMode(t *testing.T) {
+	m := NewSkyViewModel()
+
+	// Default should be LabelFocused
+	if m.labelMode != LabelFocused {
+		t.Errorf("initial labelMode = %d, want %d (LabelFocused)", m.labelMode, LabelFocused)
+	}
+
+	// Cycle: Focused -> All
+	m = m.cycleLabelMode()
+	if m.labelMode != LabelAll {
+		t.Errorf("after first cycle, labelMode = %d, want %d (LabelAll)", m.labelMode, LabelAll)
+	}
+
+	// Cycle: All -> None
+	m = m.cycleLabelMode()
+	if m.labelMode != LabelNone {
+		t.Errorf("after second cycle, labelMode = %d, want %d (LabelNone)", m.labelMode, LabelNone)
+	}
+
+	// Cycle: None -> Focused
+	m = m.cycleLabelMode()
+	if m.labelMode != LabelFocused {
+		t.Errorf("after third cycle, labelMode = %d, want %d (LabelFocused)", m.labelMode, LabelFocused)
+	}
+}
+
+func TestLabelModeConstants(t *testing.T) {
+	// Verify the label mode constants have expected values
+	if LabelNone != 0 {
+		t.Errorf("LabelNone = %d, want 0", LabelNone)
+	}
+	if LabelFocused != 1 {
+		t.Errorf("LabelFocused = %d, want 1", LabelFocused)
+	}
+	if LabelAll != 2 {
+		t.Errorf("LabelAll = %d, want 2", LabelAll)
+	}
+}

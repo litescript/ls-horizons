@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/peter/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/dsn"
 )
 
 func TestNewManager(t *testing.T) {

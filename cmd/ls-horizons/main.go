@@ -13,10 +13,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
-	"github.com/peter/ls-horizons/internal/dsn"
-	"github.com/peter/ls-horizons/internal/logging"
-	"github.com/peter/ls-horizons/internal/state"
-	"github.com/peter/ls-horizons/internal/ui"
+	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/logging"
+	"github.com/litescript/ls-horizons/internal/state"
+	"github.com/litescript/ls-horizons/internal/ui"
 )
 
 // CLI flags for headless mode
@@ -106,21 +106,66 @@ func main() {
 }
 
 func runFetchLoop(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, p *tea.Program, logger *logging.Logger) {
+	interval := stateMgr.RefreshInterval()
+
+	// Calculate next aligned refresh time and set it before initial fetch
+	next := nextAlignedTime(time.Now(), interval)
+	stateMgr.SetNextRefresh(next)
+
 	// Do initial fetch immediately
 	doFetch(ctx, fetcher, stateMgr, p, logger)
 
-	ticker := time.NewTicker(stateMgr.RefreshInterval())
-	defer ticker.Stop()
-
 	for {
+		// Calculate time until next aligned refresh
+		now := time.Now()
+		next = nextAlignedTime(now, interval)
+		stateMgr.SetNextRefresh(next)
+
+		// Create timer for the wait duration
+		waitDuration := next.Sub(now)
+		timer := time.NewTimer(waitDuration)
+
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			logger.Debug("Fetch loop shutting down")
 			return
-		case <-ticker.C:
+		case <-timer.C:
 			doFetch(ctx, fetcher, stateMgr, p, logger)
 		}
 	}
+}
+
+// nextAlignedTime calculates the next refresh time aligned to wall clock.
+// For example, with 5s interval, refreshes happen at :00, :05, :10, etc.
+func nextAlignedTime(now time.Time, interval time.Duration) time.Time {
+	// Get the interval in seconds
+	intervalSec := int64(interval.Seconds())
+	if intervalSec < 1 {
+		intervalSec = 1
+	}
+
+	// Calculate seconds since start of minute
+	sec := int64(now.Second())
+	nsec := now.Nanosecond()
+
+	// Find next aligned second
+	nextSec := ((sec / intervalSec) + 1) * intervalSec
+
+	// Build the next time
+	next := time.Date(now.Year(), now.Month(), now.Day(),
+		now.Hour(), now.Minute(), 0, 0, now.Location())
+
+	// Add the aligned seconds (may roll over to next minute)
+	next = next.Add(time.Duration(nextSec) * time.Second)
+
+	// If we're very close to the boundary (within 100ms), skip to the next one
+	if next.Sub(now) < 100*time.Millisecond {
+		next = next.Add(interval)
+	}
+
+	_ = nsec // unused but kept for clarity
+	return next
 }
 
 func doFetch(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, p *tea.Program, logger *logging.Logger) {
