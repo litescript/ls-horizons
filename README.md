@@ -2,6 +2,8 @@
 
 A terminal UI for visualizing NASA's Deep Space Network in real-time.
 
+> **Note:** This project is under active development. Features may change and bugs are expected.
+
 ![Dashboard View](docs/screenshots/dashboard.png)
 
 ## Features
@@ -48,10 +50,6 @@ Solar system visualization showing planets at real positions (via JPL Horizons) 
 
 ## Installation
 
-### Pre-built binary (macOS ARM)
-
-A pre-built binary for macOS ARM is available in `os-builds/mac-arm/`. Note that this may lag behind the latest development and is not extensively tested.
-
 ### From source
 
 Requires Go 1.21+
@@ -73,6 +71,10 @@ git clone https://github.com/litescript/ls-horizons.git
 cd ls-horizons
 go build -o ls-horizons ./cmd/ls-horizons
 ```
+
+### Pre-built binary (macOS ARM)
+
+A pre-built binary for macOS ARM is available in `os-builds/mac-arm/`. Note that this may lag behind the latest source and is not extensively tested.
 
 ## Usage
 
