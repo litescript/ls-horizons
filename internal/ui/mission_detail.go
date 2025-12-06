@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -13,11 +14,13 @@ import (
 
 // MissionDetailModel shows detailed info for a selected spacecraft.
 type MissionDetailModel struct {
-	width      int
-	height     int
-	selectedID int
-	snapshot   state.Snapshot
-	scrollY    int
+	width         int
+	height        int
+	selectedID    int
+	snapshot      state.Snapshot
+	scrollY       int
+	showPassPanel bool
+	passPlan      *dsn.PassPlan
 }
 
 // NewMissionDetailModel creates a new mission detail model.
@@ -58,10 +61,12 @@ func (m MissionDetailModel) Update(msg tea.Msg) (MissionDetailModel, tea.Cmd) {
 			}
 		case "down", "j":
 			m.scrollY++
-		case "left", "h":
+		case "left", "[":
 			m.selectPrevSpacecraft()
-		case "right", "l":
+		case "right", "]":
 			m.selectNextSpacecraft()
+		case "h":
+			m.showPassPanel = !m.showPassPanel
 		}
 	}
 	return m, nil
@@ -113,6 +118,12 @@ func (m MissionDetailModel) View() string {
 	if selected == nil {
 		b.WriteString("  No spacecraft selected. Use ←/→ to select.\n")
 		return b.String()
+	}
+
+	// Pass panel (if enabled)
+	if m.showPassPanel {
+		b.WriteString(m.renderPassPanel())
+		b.WriteString("\n")
 	}
 
 	// Spacecraft details
@@ -277,4 +288,173 @@ func (m MissionDetailModel) SelectedSpacecraftID() int {
 func (m *MissionDetailModel) SetSelectedSpacecraft(id int) {
 	m.selectedID = id
 	m.scrollY = 0
+}
+
+// UpdatePassPlan updates the pass plan data.
+func (m MissionDetailModel) UpdatePassPlan(plan *dsn.PassPlan) MissionDetailModel {
+	m.passPlan = plan
+	return m
+}
+
+// ShowPassPanel returns whether the pass panel is visible.
+func (m MissionDetailModel) ShowPassPanel() bool {
+	return m.showPassPanel
+}
+
+// renderPassPanel renders the pass & handoff panel.
+func (m MissionDetailModel) renderPassPanel() string {
+	var b strings.Builder
+
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("205"))
+
+	dimStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	nowStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("46")).
+		Bold(true)
+
+	nextStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("229"))
+
+	warningStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("208"))
+
+	// Find selected spacecraft name
+	scName := "Unknown"
+	for _, sc := range m.snapshot.Spacecraft {
+		if sc.ID == m.selectedID {
+			scName = sc.Name
+			break
+		}
+	}
+
+	b.WriteString(headerStyle.Render(fmt.Sprintf("PASSES — %s (next 24h)", scName)))
+	b.WriteString("\n")
+	b.WriteString(strings.Repeat("─", 60))
+	b.WriteString("\n\n")
+
+	if m.passPlan == nil || len(m.passPlan.Passes) == 0 {
+		b.WriteString(dimStyle.Render("  No passes computed. Waiting for ephemeris data..."))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Column headers
+	b.WriteString(labelStyle.Render("  COMPLEX   START      PEAK EL   END        SUN SEP   STATUS"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("  " + strings.Repeat("─", 58)))
+	b.WriteString("\n")
+
+	// Group passes by complex for cleaner display
+	complexes := []dsn.Complex{dsn.ComplexGoldstone, dsn.ComplexCanberra, dsn.ComplexMadrid}
+
+	for _, c := range complexes {
+		passes := m.passPlan.GetPassesForComplex(c)
+		shortName := dsn.ComplexShortName(c)
+
+		if len(passes) == 0 {
+			b.WriteString(fmt.Sprintf("  %-8s  ", shortName))
+			b.WriteString(dimStyle.Render("-- no passes --"))
+			b.WriteString("\n")
+			continue
+		}
+
+		for i, p := range passes {
+			// Skip past passes for cleaner display (show max 1 past)
+			if p.Status == dsn.PassPast && i > 0 {
+				continue
+			}
+
+			// Complex name (only show for first pass of this complex)
+			if i == 0 {
+				b.WriteString(fmt.Sprintf("  %-8s  ", shortName))
+			} else {
+				b.WriteString("            ")
+			}
+
+			// Start time
+			b.WriteString(valueStyle.Render(p.Start.UTC().Format("15:04")))
+			b.WriteString("      ")
+
+			// Peak elevation
+			elStr := fmt.Sprintf("%2.0f°", p.MaxElDeg)
+			b.WriteString(valueStyle.Render(elStr))
+			b.WriteString("       ")
+
+			// End time
+			b.WriteString(valueStyle.Render(p.End.UTC().Format("15:04")))
+			b.WriteString("      ")
+
+			// Sun separation
+			sunStr := fmt.Sprintf("%3.0f°", p.SunMinSep)
+			if p.SunMinSep < 10 {
+				b.WriteString(warningStyle.Render(sunStr))
+			} else {
+				b.WriteString(valueStyle.Render(sunStr))
+			}
+			b.WriteString("      ")
+
+			// Status
+			switch p.Status {
+			case dsn.PassNow:
+				b.WriteString(nowStyle.Render("NOW"))
+			case dsn.PassNext:
+				b.WriteString(nextStyle.Render("NEXT"))
+			case dsn.PassPast:
+				b.WriteString(dimStyle.Render("PAST"))
+			default:
+				b.WriteString(dimStyle.Render("—"))
+			}
+
+			b.WriteString("\n")
+		}
+	}
+
+	// Show next pass summary
+	b.WriteString("\n")
+	if current := m.passPlan.GetCurrentPass(); current != nil {
+		remaining := time.Until(current.End)
+		b.WriteString(nowStyle.Render(fmt.Sprintf("  ▶ Active: %s pass ends in %s",
+			dsn.ComplexShortName(current.Complex),
+			formatDuration(remaining))))
+		b.WriteString("\n")
+	}
+
+	if next := m.passPlan.GetNextPass(); next != nil {
+		until := time.Until(next.Start)
+		b.WriteString(nextStyle.Render(fmt.Sprintf("  ▷ Next: %s pass in %s",
+			dsn.ComplexShortName(next.Complex),
+			formatDuration(until))))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// formatDuration formats a duration for display.
+func formatDuration(d time.Duration) string {
+	if d < 0 {
+		return "now"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+	hours := int(d.Hours())
+	mins := int(d.Minutes()) % 60
+	if mins == 0 {
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dh %dm", hours, mins)
 }

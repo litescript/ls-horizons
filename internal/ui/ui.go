@@ -22,12 +22,16 @@ const (
 	ViewDashboard ViewMode = iota
 	ViewMissionDetail
 	ViewSky
+	ViewSolarSystem
 )
 
 // Msg types for Bubble Tea
 type (
 	// TickMsg triggers periodic UI updates.
 	TickMsg time.Time
+
+	// AnimTickMsg triggers fast animation updates.
+	AnimTickMsg time.Time
 
 	// DataUpdateMsg signals new DSN data is available.
 	DataUpdateMsg struct {
@@ -56,14 +60,17 @@ type Model struct {
 	height    int
 	ready     bool
 	statusMsg string // Status message for update checks, etc.
+	animTick  int    // Animation tick for shimmer effects
 
 	// Sub-models
 	dashboard     DashboardModel
 	missionDetail MissionDetailModel
 	skyView       SkyViewModel
+	solarSystem   SolarSystemModel
 
 	// Data snapshot (updated on DataUpdateMsg)
-	snapshot state.Snapshot
+	snapshot    state.Snapshot
+	solarCache  *dsn.SolarSystemCache
 }
 
 // New creates a new root UI model.
@@ -73,12 +80,22 @@ func New(stateMgr *state.Manager, ephemProvider ephem.Provider) Model {
 		skyView = skyView.SetPathProvider(ephemProvider)
 	}
 
+	// Create solar system cache with Horizons provider if available
+	var solarCache *dsn.SolarSystemCache
+	if hp, ok := ephemProvider.(*ephem.HorizonsProvider); ok {
+		solarCache = dsn.NewSolarSystemCache(hp)
+	} else {
+		solarCache = dsn.NewSolarSystemCache(nil)
+	}
+
 	return Model{
 		state:         stateMgr,
 		viewMode:      ViewDashboard,
 		dashboard:     NewDashboardModel(),
 		missionDetail: NewMissionDetailModel(),
 		skyView:       skyView,
+		solarSystem:   NewSolarSystemModel(),
+		solarCache:    solarCache,
 	}
 }
 
@@ -86,6 +103,7 @@ func New(stateMgr *state.Manager, ephemProvider ephem.Provider) Model {
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		tickCmd(),
+		animTickCmd(),
 		m.dashboard.Init(),
 	)
 }
@@ -110,14 +128,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.skyView = m.skyView.SyncFromDashboard(m.dashboard, m.snapshot)
 			}
 			m.viewMode = ViewSky
+		case "4", "o":
+			m.viewMode = ViewSolarSystem
 
 		case "tab":
 			// Cycle through views
-			m.viewMode = (m.viewMode + 1) % 3
+			m.viewMode = (m.viewMode + 1) % 4
 
 		case "u":
 			m.statusMsg = "Checking for updates..."
-			return m, checkForUpdate()
+			cmds = append(cmds, checkForUpdate())
 
 		default:
 			// Pass to active view
@@ -145,17 +165,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dashboard = m.dashboard.SetSize(msg.Width, contentHeight)
 		m.missionDetail = m.missionDetail.SetSize(msg.Width, contentHeight)
 		m.skyView = m.skyView.SetSize(msg.Width, contentHeight)
+		m.solarSystem = m.solarSystem.SetSize(msg.Width, contentHeight)
 
 	case TickMsg:
 		cmds = append(cmds, tickCmd())
 		// Request fresh snapshot
 		m.snapshot = m.state.Snapshot()
 
+	case AnimTickMsg:
+		cmds = append(cmds, animTickCmd())
+		m.animTick++
+
 	case DataUpdateMsg:
 		m.snapshot = msg.Snapshot
 		m.dashboard = m.dashboard.UpdateData(m.snapshot)
 		m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 		m.skyView = m.skyView.UpdateData(m.snapshot)
+
+		// Update solar system cache with DSN data (async to avoid blocking UI)
+		if m.solarCache != nil {
+			// Spacecraft updates are fast (just uses DSN data)
+			if m.solarCache.NeedsSpacecraftRefresh() {
+				_ = m.solarCache.UpdateSpacecraft(m.snapshot.Data)
+			}
+			// Planet updates are slow (HTTP calls) - do async
+			if m.solarCache.NeedsPlanetRefresh() {
+				go m.solarCache.UpdatePlanets()
+			}
+			solarSnap := m.solarCache.GetSnapshot()
+			m.solarSystem = m.solarSystem.UpdateData(m.snapshot, solarSnap)
+		}
 
 	case ErrorMsg:
 		// Could display error in status bar
@@ -177,6 +216,8 @@ func (m *Model) updateActiveView(msg tea.Msg) tea.Cmd {
 		m.missionDetail, cmd = m.missionDetail.Update(msg)
 	case ViewSky:
 		m.skyView, cmd = m.skyView.Update(msg)
+	case ViewSolarSystem:
+		m.solarSystem, cmd = m.solarSystem.Update(msg)
 	}
 	return cmd
 }
@@ -195,6 +236,8 @@ func (m Model) View() string {
 		content = m.missionDetail.View()
 	case ViewSky:
 		content = m.skyView.View()
+	case ViewSolarSystem:
+		content = m.solarSystem.View()
 	}
 
 	return m.renderFrame(content)
@@ -212,7 +255,7 @@ func (m Model) renderHeader() string {
 }
 
 func (m Model) renderLogo() string {
-	// ASCII art with nebula/space gradient coloring
+	// ASCII art with smooth truecolor gradient
 	logo := []string{
 		`  ██╗     ███████╗      ██╗  ██╗ ██████╗ ██████╗ ██╗███████╗ ██████╗ ███╗   ██╗███████╗`,
 		`  ██║     ██╔════╝      ██║  ██║██╔═══██╗██╔══██╗██║╚══███╔╝██╔═══██╗████╗  ██║██╔════╝`,
@@ -222,22 +265,22 @@ func (m Model) renderLogo() string {
 		`  ╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝`,
 	}
 
-	// Space/nebula gradient - deep purple to bright blue/pink
-	colors := []string{
-		"#9D4EDD", // Vibrant purple
-		"#7B2CBF", // Deep purple
-		"#5A189A", // Royal purple
-		"#3C096C", // Dark purple
-		"#240046", // Deep violet
-		"#10002B", // Near black purple
-	}
-
 	var b strings.Builder
 	b.WriteString("\n")
 
-	for i, line := range logo {
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(colors[i]))
-		b.WriteString(style.Render(line))
+	// Render each line with a horizontal truecolor gradient
+	for row, line := range logo {
+		runes := []rune(line)
+		lineLen := len(runes)
+
+		for col, r := range runes {
+			// Create a smooth gradient based on position
+			// Horizontal: purple -> pink -> cyan
+			// Vertical: brighter at top, darker at bottom
+			color := gradientColor(col, row, lineLen, len(logo))
+			style := lipgloss.NewStyle().Foreground(lipgloss.Color(color))
+			b.WriteString(style.Render(string(r)))
+		}
 		b.WriteString("\n")
 	}
 
@@ -254,13 +297,76 @@ func (m Model) renderLogo() string {
 	return b.String()
 }
 
+// gradientColor returns a hex color for a position in the logo gradient.
+// Creates a vibrant nebula effect: blue -> purple -> magenta -> pink
+func gradientColor(col, row, width, height int) string {
+	// Normalize positions to 0-1
+	xRatio := float64(col) / float64(width)
+	yRatio := float64(row) / float64(height)
+
+	// More dramatic horizontal gradient with higher saturation
+	// Blue (#3B82F6) -> Purple (#8B5CF6) -> Magenta (#D946EF) -> Pink (#EC4899)
+	var r, g, b float64
+
+	if xRatio < 0.33 {
+		// Blue to Purple
+		t := xRatio / 0.33
+		r = 59 + t*(139-59)
+		g = 130 + t*(92-130)
+		b = 246 + t*(246-246)
+	} else if xRatio < 0.66 {
+		// Purple to Magenta
+		t := (xRatio - 0.33) / 0.33
+		r = 139 + t*(217-139)
+		g = 92 + t*(70-92)
+		b = 246 + t*(239-246)
+	} else {
+		// Magenta to Pink
+		t := (xRatio - 0.66) / 0.34
+		r = 217 + t*(236-217)
+		g = 70 + t*(72-70)
+		b = 239 + t*(153-239)
+	}
+
+	// Vertical fade: brighter at top, darker toward bottom
+	brightnessFactor := 1.0 - (yRatio * 0.5)
+	r *= brightnessFactor
+	g *= brightnessFactor
+	b *= brightnessFactor
+
+	// Clamp to valid range
+	ri := int(r)
+	gi := int(g)
+	bi := int(b)
+	if ri > 255 {
+		ri = 255
+	}
+	if gi > 255 {
+		gi = 255
+	}
+	if bi > 255 {
+		bi = 255
+	}
+	if ri < 0 {
+		ri = 0
+	}
+	if gi < 0 {
+		gi = 0
+	}
+	if bi < 0 {
+		bi = 0
+	}
+
+	return fmt.Sprintf("#%02X%02X%02X", ri, gi, bi)
+}
+
 func (m Model) renderStatusLine() string {
 	tabs := m.renderTabs()
 	return tabs + "\n"
 }
 
 func (m Model) renderTabs() string {
-	tabs := []string{"[1] Dashboard", "[2] Mission", "[3] Sky"}
+	tabs := []string{"[1] Dashboard", "[2] Mission", "[3] Sky", "[4] Orbit"}
 	activeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#9D4EDD")).Bold(true)
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("60"))
 
@@ -280,28 +386,36 @@ func (m Model) renderFooter() string {
 	errorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#E84A27"))
 	accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#7B2CBF"))
 
+	// Animated spinner frames
+	spinnerFrames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	spinner := spinnerFrames[m.animTick%len(spinnerFrames)]
+
 	var status string
 	if m.snapshot.LastError != nil {
 		status = errorStyle.Render("ERROR: " + m.snapshot.LastError.Error())
 	} else if !m.snapshot.LastFetch.IsZero() {
-		// Show countdown to next refresh
+		// Show countdown to next refresh with spinner
 		countdown := time.Until(m.snapshot.NextRefresh).Round(time.Second)
 		if countdown < 0 {
 			countdown = 0
 		}
-		status = accentStyle.Render("●") + dimStyle.Render(fmt.Sprintf(" refresh in %ds", int(countdown.Seconds())))
+		status = accentStyle.Render(spinner) + dimStyle.Render(fmt.Sprintf(" refresh in %ds", int(countdown.Seconds())))
 		if m.snapshot.FetchDuration > 0 {
 			status += dimStyle.Render(" (" + m.snapshot.FetchDuration.Round(time.Millisecond).String() + ")")
 		}
 	} else {
-		status = dimStyle.Render("◌ Waiting for data...")
+		status = accentStyle.Render(spinner) + " " + m.renderShimmerText("Waiting for data...")
 	}
 
 	// View-specific help hints
 	var help string
 	switch m.viewMode {
+	case ViewMissionDetail:
+		help = dimStyle.Render("←/→: spacecraft | h: passes | ↑↓: scroll")
 	case ViewSky:
 		help = dimStyle.Render("j/k: focus | l: labels | c: complex | p: path | v: visibility")
+	case ViewSolarSystem:
+		help = dimStyle.Render("j/k: focus | n/N: spacecraft | +/-: zoom | arrows: pan | f: find | l: labels | z: mode")
 	default:
 		help = dimStyle.Render("↑↓: navigate | tab: switch view")
 	}
@@ -332,6 +446,12 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+func animTickCmd() tea.Cmd {
+	return tea.Tick(80*time.Millisecond, func(t time.Time) tea.Msg {
+		return AnimTickMsg(t)
+	})
+}
+
 func checkForUpdate() tea.Cmd {
 	return func() tea.Msg {
 		info := version.CheckForUpdate()
@@ -351,6 +471,51 @@ func SendError(err error) tea.Cmd {
 	return func() tea.Msg {
 		return ErrorMsg{Error: err}
 	}
+}
+
+// renderShimmerText renders text with a subtle moving shine effect.
+func (m Model) renderShimmerText(text string) string {
+	runes := []rune(text)
+	textLen := len(runes)
+	if textLen == 0 {
+		return ""
+	}
+
+	// Shimmer sweeps smoothly across
+	pos := m.animTick % (textLen + 8) // A bit of padding for smooth entry/exit
+
+	var result strings.Builder
+
+	for i, r := range runes {
+		// Distance from shimmer center
+		dist := i - pos + 4
+		if dist < 0 {
+			dist = -dist
+		}
+
+		// Subtle purple gradient - gentle highlight that fades smoothly
+		// Base is dim purple, highlight is brighter lavender
+		var r8, g8, b8 int
+		if dist <= 1 {
+			// Soft highlight - light lavender
+			r8, g8, b8 = 180, 160, 220
+		} else if dist <= 3 {
+			// Mid transition
+			r8, g8, b8 = 140, 120, 180
+		} else if dist <= 5 {
+			// Fading
+			r8, g8, b8 = 110, 90, 150
+		} else {
+			// Base dim purple
+			r8, g8, b8 = 80, 70, 120
+		}
+
+		hexColor := fmt.Sprintf("#%02X%02X%02X", r8, g8, b8)
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
+		result.WriteString(style.Render(string(r)))
+	}
+
+	return result.String()
 }
 
 // Helper to get link count for status display

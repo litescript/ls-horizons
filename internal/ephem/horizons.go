@@ -324,3 +324,187 @@ func abs(x float64) float64 {
 	}
 	return x
 }
+
+// Heliocentric vector cache
+type cachedVector struct {
+	pos       astro.Vec3
+	fetchedAt time.Time
+}
+
+// VectorCacheTTL is how long to cache heliocentric positions.
+const VectorCacheTTL = 10 * time.Minute
+
+// vectorCache stores heliocentric positions by NAIF ID.
+var vectorCache = struct {
+	sync.RWMutex
+	data map[int]*cachedVector
+}{data: make(map[int]*cachedVector)}
+
+// GetHeliocentricPosition returns the heliocentric ecliptic position in AU.
+// This implements the dsn.SolarSystemProvider interface.
+func (p *HorizonsProvider) GetHeliocentricPosition(naifID int, t time.Time) (astro.Vec3, error) {
+	// Check cache
+	vectorCache.RLock()
+	cached, ok := vectorCache.data[naifID]
+	vectorCache.RUnlock()
+
+	if ok && time.Since(cached.fetchedAt) < VectorCacheTTL {
+		return cached.pos, nil
+	}
+
+	// Query Horizons for heliocentric ecliptic vectors
+	pos, err := p.queryHeliocentricVectors(naifID, t)
+	if err != nil {
+		return astro.Vec3{}, err
+	}
+
+	// Cache result
+	vectorCache.Lock()
+	vectorCache.data[naifID] = &cachedVector{
+		pos:       pos,
+		fetchedAt: time.Now(),
+	}
+	vectorCache.Unlock()
+
+	return pos, nil
+}
+
+// queryHeliocentricVectors queries Horizons for heliocentric ecliptic state vectors.
+func (p *HorizonsProvider) queryHeliocentricVectors(naifID int, t time.Time) (astro.Vec3, error) {
+	// Build request parameters for VECTORS ephemeris
+	params := url.Values{}
+	params.Set("format", "json")
+	params.Set("COMMAND", fmt.Sprintf("'%d'", naifID))
+	params.Set("OBJ_DATA", "NO")
+	params.Set("MAKE_EPHEM", "YES")
+	params.Set("EPHEM_TYPE", "VECTORS")
+	params.Set("CENTER", "'@10'")       // Sun center
+	params.Set("REF_PLANE", "ECLIPTIC") // Ecliptic plane
+	params.Set("REF_SYSTEM", "ICRF")
+	params.Set("VEC_TABLE", "'2'")     // Position only (no velocity)
+	params.Set("VEC_LABELS", "NO")
+	params.Set("OUT_UNITS", "'AU-D'")  // AU and days
+	params.Set("START_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(t)))
+	params.Set("STOP_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(t.Add(time.Minute))))
+	params.Set("STEP_SIZE", "'1 m'")
+
+	reqURL := HorizonsAPIURL + "?" + params.Encode()
+
+	resp, err := p.client.Get(reqURL)
+	if err != nil {
+		return astro.Vec3{}, fmt.Errorf("horizons vector request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return astro.Vec3{}, fmt.Errorf("horizons returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return astro.Vec3{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return parseVectorResponse(body)
+}
+
+// parseVectorResponse parses the Horizons JSON response for vector data.
+func parseVectorResponse(body []byte) (astro.Vec3, error) {
+	var resp horizonsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return astro.Vec3{}, fmt.Errorf("failed to parse JSON: %w", err)
+	}
+
+	// Find the data section between $$SOE and $$EOE markers
+	soeIdx := strings.Index(resp.Result, "$$SOE")
+	eoeIdx := strings.Index(resp.Result, "$$EOE")
+	if soeIdx == -1 || eoeIdx == -1 || soeIdx >= eoeIdx {
+		return astro.Vec3{}, fmt.Errorf("could not find vector data markers")
+	}
+
+	dataSection := resp.Result[soeIdx+5 : eoeIdx]
+	lines := strings.Split(dataSection, "\n")
+
+	// Vector format (VEC_TABLE='2', no labels):
+	// 2460651.500000000 = A.D. 2024-Dec-05 00:00:00.0000 TDB
+	//  X = 1.234567890123456E+00 Y = 2.345678901234567E+00 Z = 3.456789012345678E-01
+	// OR compact format:
+	// 2460651.500000000 = A.D. 2024-Dec-05 00:00:00.0000 TDB
+	//  1.234567890123456E+00  2.345678901234567E+00  3.456789012345678E-01
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "=") && strings.Contains(line, "A.D.") {
+			continue
+		}
+
+		// Try labeled format first: X = val Y = val Z = val
+		if strings.Contains(line, "X =") {
+			return parseVectorLabeled(line)
+		}
+
+		// Try unlabeled format: just three numbers
+		vec, err := parseVectorUnlabeled(line)
+		if err == nil {
+			return vec, nil
+		}
+	}
+
+	return astro.Vec3{}, fmt.Errorf("could not parse vector data")
+}
+
+// parseVectorLabeled parses: X = 1.23E+00 Y = 2.34E+00 Z = 3.45E-01
+func parseVectorLabeled(line string) (astro.Vec3, error) {
+	var x, y, z float64
+
+	// Split on = and parse pairs
+	parts := strings.Split(line, "=")
+	if len(parts) < 4 {
+		return astro.Vec3{}, fmt.Errorf("invalid labeled format")
+	}
+
+	// parts[1] contains "X_value Y", parts[2] contains "Y_value Z", parts[3] contains "Z_value"
+	xStr := strings.Fields(parts[1])[0]
+	yStr := strings.Fields(parts[2])[0]
+	zStr := strings.TrimSpace(parts[3])
+
+	var err error
+	x, err = strconv.ParseFloat(xStr, 64)
+	if err != nil {
+		return astro.Vec3{}, err
+	}
+	y, err = strconv.ParseFloat(yStr, 64)
+	if err != nil {
+		return astro.Vec3{}, err
+	}
+	z, err = strconv.ParseFloat(zStr, 64)
+	if err != nil {
+		return astro.Vec3{}, err
+	}
+
+	return astro.Vec3{X: x, Y: y, Z: z}, nil
+}
+
+// parseVectorUnlabeled parses: 1.23E+00  2.34E+00  3.45E-01
+func parseVectorUnlabeled(line string) (astro.Vec3, error) {
+	fields := strings.Fields(line)
+	if len(fields) < 3 {
+		return astro.Vec3{}, fmt.Errorf("insufficient fields: %d", len(fields))
+	}
+
+	x, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil {
+		return astro.Vec3{}, err
+	}
+	y, err := strconv.ParseFloat(fields[1], 64)
+	if err != nil {
+		return astro.Vec3{}, err
+	}
+	z, err := strconv.ParseFloat(fields[2], 64)
+	if err != nil {
+		return astro.Vec3{}, err
+	}
+
+	return astro.Vec3{X: x, Y: y, Z: z}, nil
+}
