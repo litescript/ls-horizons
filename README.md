@@ -56,6 +56,12 @@ Requires Go 1.21+
 go install github.com/litescript/ls-horizons/cmd/ls-horizons@latest
 ```
 
+Make sure your Go bin directory is on your `PATH`:
+
+```bash
+export PATH="$(go env GOPATH)/bin:$PATH"
+```
+
 ### Build locally
 
 ```bash
