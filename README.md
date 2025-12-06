@@ -7,13 +7,15 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 ## Features
 
 - **Real-time DSN monitoring** — Live data from NASA's Deep Space Network XML feed
+- **Pass planning** — Computed visibility windows for all three DSN complexes using JPL Horizons ephemeris
 - **Real star catalog** — 150+ bright stars with accurate J2000 coordinates rendered in the sky view
 - **Astronomical projection** — Proper RA/Dec to Az/El conversion using GMST/LST calculations
-- **JPL Horizons integration** — Trajectory path arcs using ephemeris data from NASA/JPL (in progress)
-- **Three view modes**:
-  - **Dashboard** — Complex utilization status and active spacecraft table with multi-antenna tracking
-  - **Mission Detail** — Per-spacecraft deep dive with signal metrics and history sparklines
+- **JPL Horizons integration** — Trajectory path arcs and geocentric RA/Dec for pass planning
+- **Four view modes**:
+  - **Dashboard** — Complex status and active spacecraft table with multi-antenna tracking
+  - **Mission Detail** — Per-spacecraft deep dive with pass schedules and link details
   - **Sky View** — Animated star field with spacecraft positions and smooth camera transitions
+  - **Orbit View** — Solar system visualization with real planet positions and spacecraft trajectories
 - **Derived metrics**:
   - Distance calculated from round-trip light time (RTLT)
   - Velocity estimation from RTLT delta
@@ -29,7 +31,7 @@ Real-time status of all three DSN complexes with active spacecraft table showing
 ![Dashboard](docs/screenshots/dashboard.png)
 
 ### Mission Detail View
-Deep dive into individual spacecraft with link details, signal history sparklines, and RTLT information.
+Deep dive into individual spacecraft with link details, pass schedules for all three DSN complexes, and signal metrics. Press `Enter` from Dashboard to jump directly here.
 
 ![Mission Detail](docs/screenshots/mission.png)
 
@@ -37,6 +39,11 @@ Deep dive into individual spacecraft with link details, signal history sparkline
 Animated celestial view with real star positions, spacecraft locations, and trajectory path arcs. Smooth camera transitions when cycling between spacecraft.
 
 ![Sky View](docs/screenshots/sky-view.png)
+
+### Orbit View
+Solar system visualization showing planets at real positions (via JPL Horizons) and active spacecraft with their trajectories. Toggle star background with `t`.
+
+![Orbit View](docs/screenshots/orbit-view.png)
 
 ## Installation
 
@@ -80,11 +87,16 @@ ls-horizons --ephem auto       # Horizons with fallback
 | `1` or `d` | Dashboard view |
 | `2` or `m` | Mission detail view |
 | `3` or `s` | Sky view |
+| `4` or `o` | Orbit view |
 | `Tab` | Cycle through views |
-| `j/k` or `↑/↓` | Navigate lists / cycle spacecraft |
+| `Enter` | Open Mission view for selected spacecraft (Dashboard) |
+| `j/k` or `↑/↓` | Navigate lists |
+| `[/]` or `←/→` | Cycle spacecraft (Mission/Sky/Orbit) |
+| `h` | Toggle pass panel (Mission view) |
 | `l` | Toggle labels (Sky view) |
 | `c` | Cycle complex filter (Sky view) |
 | `p` | Toggle trajectory path (Sky view) |
+| `t` | Toggle star background (Orbit view) |
 | `u` | Check for updates |
 | `q` | Quit |
 
@@ -176,29 +188,35 @@ Star positions sourced from the Yale Bright Star Catalog and IAU star names. The
 cmd/ls-horizons/        Entry point and CLI flags
 internal/
 ├── astro/              Astronomical calculations
-│   ├── coords.go       RA/Dec ↔ Az/El transforms, GMST/LST, Julian Date
+│   ├── coords.go       RA/Dec ↔ Az/El transforms, GMST/LST
+│   ├── frames.go       Coordinate frame conversions (ecliptic, etc.)
+│   ├── visibility.go   Ground station visibility calculations
+│   ├── sun.go          Sun position calculations
 │   └── stars.go        Star catalog with 150+ bright stars
 ├── dsn/
 │   ├── models.go       Data structures (Station, Antenna, Link, etc.)
 │   ├── parser.go       XML feed parsing
 │   ├── fetcher.go      HTTP client with retry logic
-│   ├── derive.go       Distance, velocity, struggle index calculations
+│   ├── derive.go       Distance, velocity, struggle index
+│   ├── passplan.go     Pass planning with elevation thresholds
 │   ├── spacecraft.go   Spacecraft catalog with mission metadata
 │   ├── spacecraft_view.go  Multi-antenna tracking abstraction
+│   ├── solarsystem.go  Solar system cache with planet positions
 │   ├── observer.go     DSN complex observer locations
 │   └── export.go       JSON and text export
 ├── ephem/              Ephemeris providers
 │   ├── provider.go     EphemerisProvider interface
-│   ├── horizons.go     JPL Horizons API client
+│   ├── horizons.go     JPL Horizons API client (ephemeris + RA/Dec)
 │   ├── dsn_provider.go DSN-derived fallback
-│   └── targets.go      NAIF SPICE ID mappings
+│   └── targets.go      NAIF SPICE ID mappings (45+ spacecraft)
 ├── state/
-│   └── state.go        Thread-safe state manager with history buffers
+│   └── state.go        Thread-safe state with pass plan caching
 ├── ui/
-│   ├── ui.go           Bubble Tea main model
-│   ├── dashboard.go    Dashboard view
-│   ├── mission.go      Mission detail view
-│   └── sky_view.go     Sky projection with braille arc rendering
+│   ├── ui.go           Bubble Tea main model with request queue
+│   ├── dashboard.go    Dashboard view with Enter→Mission flow
+│   ├── mission_detail.go  Mission view with pass panel
+│   ├── sky_view.go     Sky projection with braille arc rendering
+│   └── solarsystem_view.go  Orbit view with ecliptic projection
 ├── logging/
 │   └── logging.go      Structured logging
 └── version/
