@@ -48,6 +48,10 @@ Solar system visualization showing planets at real positions (via JPL Horizons) 
 
 ## Installation
 
+### Pre-built binary (macOS ARM)
+
+A pre-built binary for macOS ARM is available in `os-builds/mac-arm/`. Note that this may lag behind the latest development and is not extensively tested.
+
 ### From source
 
 Requires Go 1.21+
