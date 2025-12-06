@@ -50,9 +50,12 @@ Solar system visualization showing planets at real positions (via JPL Horizons) 
 
 ## Installation
 
-### From source
+### Requirements
 
-Requires Go 1.21+
+- **Terminal with truecolor support** — The UI uses 24-bit color for gradients and styling. Most modern terminals work fine (iTerm2, Alacritty, Kitty, Windows Terminal, GNOME Terminal, etc.). Basic terminals like older xterm or screen may have limited color support.
+- **Go 1.21+** — For building from source
+
+### From source
 
 ```bash
 go install github.com/litescript/ls-horizons/cmd/ls-horizons@latest
