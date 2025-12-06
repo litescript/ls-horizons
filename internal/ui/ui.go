@@ -58,6 +58,14 @@ type (
 	// passPlanQueueTickMsg triggers processing the next queued pass plan request.
 	passPlanQueueTickMsg struct{}
 
+	// elevTraceUpdatedMsg signals elevation trace computation completed.
+	elevTraceUpdatedMsg struct {
+		spacecraftID int
+		trace        *dsn.ElevationTrace
+		complex      dsn.Complex
+		err          error
+	}
+
 	// DashboardOpenMissionMsg requests opening Mission view for a spacecraft.
 	DashboardOpenMissionMsg struct {
 		SpacecraftID int
@@ -237,12 +245,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 		// Process next in queue after a delay
 		cmds = append(cmds, m.scheduleNextPassPlanFetch())
+		// Now that pass plan is available, check if elevation trace needs refresh
+		// (pass plan may provide complex info for elevation trace)
+		if cmd := m.maybeRefreshElevTrace(msg.spacecraftID); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 
 	case passPlanQueueTickMsg:
 		// Process next queued pass plan request
 		if cmd := m.processPassPlanQueue(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+
+	case elevTraceUpdatedMsg:
+		m.state.UpdateElevationTrace(msg.spacecraftID, msg.trace, msg.complex, msg.err)
+		// Request fresh snapshot to get the updated elevation trace
+		m.snapshot = m.state.Snapshot()
+		// Push to mission detail immediately so data shows without waiting for tick
+		m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 
 	case SpacecraftChangedMsg:
 		// Forward from mission detail - immediately update focused spacecraft
@@ -263,6 +283,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 					}
 				}
+			}
+			// Also trigger elevation trace refresh if needed
+			if cmd := m.maybeRefreshElevTrace(msg.SpacecraftID); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 
@@ -289,6 +313,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 					}
 				}
+			}
+			// Also trigger elevation trace refresh if needed
+			if cmd := m.maybeRefreshElevTrace(msg.SpacecraftID); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
 
@@ -777,5 +805,138 @@ func (m *Model) refreshPassPlanFor(spacecraftID int) tea.Cmd {
 
 		plan := dsn.ComputePassPlan(scCode, samples, now)
 		return passPlanUpdatedMsg{spacecraftID: spacecraftID, plan: plan, err: nil}
+	}
+}
+
+// getTargetComplexForElevTrace determines which DSN complex to use for elevation trace.
+// Priority: 1) Active link complex, 2) NOW pass complex, 3) NEXT pass complex.
+// Returns empty string if no suitable complex found.
+func (m *Model) getTargetComplexForElevTrace(spacecraftID int) dsn.Complex {
+	// First, check for active link
+	if m.snapshot.Data != nil {
+		for _, link := range m.snapshot.Data.Links {
+			if link.SpacecraftID == spacecraftID && link.Complex != "" {
+				return link.Complex
+			}
+		}
+	}
+
+	// Next, check pass plan for NOW or NEXT pass
+	if m.snapshot.PassPlan != nil {
+		now := time.Now()
+		var nextPass *dsn.Pass
+		for i := range m.snapshot.PassPlan.Passes {
+			pass := &m.snapshot.PassPlan.Passes[i]
+			// NOW pass: current time is within the pass window
+			if now.After(pass.Start) && now.Before(pass.End) {
+				return pass.Complex
+			}
+			// Track the first future pass as NEXT candidate
+			if pass.Start.After(now) && nextPass == nil {
+				nextPass = pass
+			}
+		}
+		// Return NEXT pass complex if we found one
+		if nextPass != nil {
+			return nextPass.Complex
+		}
+	}
+
+	return ""
+}
+
+// maybeRefreshElevTrace checks if elevation trace needs refresh and triggers it.
+func (m *Model) maybeRefreshElevTrace(spacecraftID int) tea.Cmd {
+	if spacecraftID == 0 {
+		return nil
+	}
+
+	targetComplex := m.getTargetComplexForElevTrace(spacecraftID)
+	if targetComplex == "" {
+		// No complex available for elevation trace
+		return nil
+	}
+
+	if m.state.NeedsElevationTraceRefresh(spacecraftID, targetComplex) {
+		return m.refreshElevTraceFor(spacecraftID, targetComplex)
+	}
+
+	return nil
+}
+
+// refreshElevTraceFor starts async elevation trace computation for a spacecraft.
+func (m *Model) refreshElevTraceFor(spacecraftID int, complex dsn.Complex) tea.Cmd {
+	// Find spacecraft name
+	var scName string
+	for _, sc := range m.snapshot.Spacecraft {
+		if sc.ID == spacecraftID {
+			scName = sc.Name
+			break
+		}
+	}
+
+	if scName == "" {
+		return nil
+	}
+
+	// Mark as loading and refresh snapshot so UI shows loading state
+	m.state.SetElevationTraceLoading(spacecraftID, true)
+	m.snapshot = m.state.Snapshot()
+
+	// Look up NAIF ID
+	naifID := ephem.GetNAIFIDByName(scName)
+	if naifID == 0 {
+		return func() tea.Msg {
+			return elevTraceUpdatedMsg{
+				spacecraftID: spacecraftID,
+				trace:        nil,
+				complex:      complex,
+				err:          fmt.Errorf("unknown spacecraft: %s", scName),
+			}
+		}
+	}
+
+	// Get spacecraft code
+	targetInfo, ok := ephem.GetTargetByName(scName)
+	if !ok {
+		return func() tea.Msg {
+			return elevTraceUpdatedMsg{
+				spacecraftID: spacecraftID,
+				trace:        nil,
+				complex:      complex,
+				err:          fmt.Errorf("unknown spacecraft: %s", scName),
+			}
+		}
+	}
+	scCode := targetInfo.Code
+
+	// Get Horizons provider for RA/Dec query
+	hp, ok := m.ephemProvider.(*ephem.HorizonsProvider)
+	if !ok {
+		return func() tea.Msg {
+			return elevTraceUpdatedMsg{
+				spacecraftID: spacecraftID,
+				trace:        nil,
+				complex:      complex,
+				err:          fmt.Errorf("ephemeris provider does not support RA/Dec queries"),
+			}
+		}
+	}
+
+	// Compute elevation trace async
+	return func() tea.Msg {
+		now := time.Now()
+		// Request RA/Dec for ±2h window
+		start := now.Add(-dsn.ElevationTraceWindow)
+		end := now.Add(dsn.ElevationTraceWindow)
+		step := dsn.ElevationTraceSampleInterval
+
+		samples, err := hp.GetRADecPath(naifID, start, end, step)
+		if err != nil {
+			return elevTraceUpdatedMsg{spacecraftID: spacecraftID, trace: nil, complex: complex, err: err}
+		}
+
+		trace := dsn.ComputeElevationTrace(scCode, complex, samples, now)
+		return elevTraceUpdatedMsg{spacecraftID: spacecraftID, trace: trace, complex: complex, err: nil}
 	}
 }

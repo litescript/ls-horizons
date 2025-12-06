@@ -8,6 +8,7 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 
 - **Real-time DSN monitoring** — Live data from NASA's Deep Space Network XML feed
 - **Pass planning** — Computed visibility windows for all three DSN complexes using JPL Horizons ephemeris
+- **Elevation sparkline** — Real-time ±2h elevation trace with truecolor gradient in Mission view
 - **Real star catalog** — 150+ bright stars with accurate J2000 coordinates rendered in the sky view
 - **Astronomical projection** — Proper RA/Dec to Az/El conversion using GMST/LST calculations
 - **JPL Horizons integration** — Trajectory path arcs and geocentric RA/Dec for pass planning
@@ -31,7 +32,7 @@ Real-time status of all three DSN complexes with active spacecraft table showing
 ![Dashboard](docs/screenshots/dashboard.png)
 
 ### Mission Detail View
-Deep dive into individual spacecraft with link details, pass schedules for all three DSN complexes, and signal metrics. Press `Enter` from Dashboard to jump directly here.
+Deep dive into individual spacecraft with link details, pass schedules, and elevation sparkline showing ±2h visibility trace. Press `Enter` from Dashboard to jump directly here.
 
 ![Mission Detail](docs/screenshots/mission.png)
 
@@ -199,6 +200,7 @@ internal/
 │   ├── fetcher.go      HTTP client with retry logic
 │   ├── derive.go       Distance, velocity, struggle index
 │   ├── passplan.go     Pass planning with elevation thresholds
+│   ├── elevtrace.go    Elevation trace computation for sparklines
 │   ├── spacecraft.go   Spacecraft catalog with mission metadata
 │   ├── spacecraft_view.go  Multi-antenna tracking abstraction
 │   ├── solarsystem.go  Solar system cache with planet positions
@@ -210,11 +212,11 @@ internal/
 │   ├── dsn_provider.go DSN-derived fallback
 │   └── targets.go      NAIF SPICE ID mappings (45+ spacecraft)
 ├── state/
-│   └── state.go        Thread-safe state with pass plan caching
+│   └── state.go        Thread-safe state with pass plan and elevation trace caching
 ├── ui/
 │   ├── ui.go           Bubble Tea main model with request queue
 │   ├── dashboard.go    Dashboard view with Enter→Mission flow
-│   ├── mission_detail.go  Mission view with pass panel
+│   ├── mission_detail.go  Mission view with pass panel and elevation sparkline
 │   ├── sky_view.go     Sky projection with braille arc rendering
 │   └── solarsystem_view.go  Orbit view with ecliptic projection
 ├── logging/

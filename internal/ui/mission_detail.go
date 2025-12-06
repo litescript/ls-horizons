@@ -289,13 +289,11 @@ func (m MissionDetailModel) renderSpacecraftDetails(sc *dsn.Spacecraft) string {
 		}
 	}
 
-	// Sparkline placeholders for history
+	// Elevation sparkline
 	b.WriteString("\n")
-	b.WriteString(headerStyle.Render("Signal History"))
+	b.WriteString(headerStyle.Render("Elevation"))
 	b.WriteString("\n")
-	b.WriteString(m.renderSparkline("Distance", 30))
-	b.WriteString("\n")
-	b.WriteString(m.renderSparkline("Data Rate", 30))
+	b.WriteString(m.renderElevationSparkline())
 	b.WriteString("\n")
 
 	return b.String()
@@ -318,23 +316,183 @@ func (m MissionDetailModel) renderDopplerInfo(band string, distanceKm float64) s
 	return fmt.Sprintf("Model: %s @ %.0f MHz", band, freq)
 }
 
-// renderSparkline renders a simple text-based sparkline (placeholder).
-func (m MissionDetailModel) renderSparkline(label string, width int) string {
-	labelStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Width(12)
+// SparklineWidth is the fixed width of the elevation sparkline.
+const SparklineWidth = 48
 
-	// Placeholder sparkline characters: ▁▂▃▄▅▆▇█
-	// For now, just show a placeholder pattern
-	sparkChars := "▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇▆▅▄▃▂▁▂▃▄"
-	if len(sparkChars) > width {
-		sparkChars = sparkChars[:width]
+// sparklineBlocks are the Unicode block characters for sparkline (0 = lowest, 7 = highest).
+var sparklineBlocks = []rune{'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+
+// elevColorLow is the color for low elevation (dark blue).
+var elevColorLow = [3]uint8{0x1b, 0x2b, 0x4b}
+
+// elevColorMid is the color for mid elevation (blue).
+var elevColorMid = [3]uint8{0x34, 0x78, 0xc0}
+
+// elevColorHigh is the color for high elevation (cyan).
+var elevColorHigh = [3]uint8{0x8b, 0xe9, 0xff}
+
+// renderElevationSparkline renders the elevation trace as a sparkline.
+func (m MissionDetailModel) renderElevationSparkline() string {
+	// Check if we have elevation trace data
+	if m.snapshot.ElevationTraceLoading {
+		return m.renderShimmerSparkline("Loading elevation data...")
 	}
 
-	sparkStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("39"))
+	if m.snapshot.ElevationTraceError != nil {
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		return dimStyle.Render("Error: " + m.snapshot.ElevationTraceError.Error())
+	}
 
-	return labelStyle.Render(label+":") + " " + sparkStyle.Render(sparkChars)
+	trace := m.snapshot.ElevationTrace
+	if trace == nil || len(trace.Samples) == 0 {
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		return dimStyle.Render("No DSN geometry available")
+	}
+
+	// Resample to fixed width
+	samples := resampleElevation(trace.Samples, SparklineWidth)
+	if len(samples) == 0 {
+		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		return dimStyle.Render("No DSN geometry available")
+	}
+
+	// Build sparkline with per-cell coloring
+	var sb strings.Builder
+
+	// Complex label prefix
+	complexLabel := string(m.snapshot.ElevationTraceComplex)
+	if complexLabel != "" {
+		labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+		sb.WriteString(labelStyle.Render(complexLabel))
+		sb.WriteString(" ")
+	}
+
+	for _, elev := range samples {
+		// Clamp to valid range
+		if elev < 0 {
+			elev = 0
+		}
+		if elev > 90 {
+			elev = 90
+		}
+
+		// Normalize to 0-1 for color (0° = 0, 90° = 1)
+		t := elev / 90.0
+
+		// Map to block character (0° = lowest block, 90° = highest)
+		blockIdx := int(t * 7.0)
+		if blockIdx > 7 {
+			blockIdx = 7
+		}
+		blockChar := sparklineBlocks[blockIdx]
+
+		// Compute color via linear interpolation
+		r, g, b := interpolateElevColor(t)
+		color := fmt.Sprintf("#%02x%02x%02x", r, g, b)
+
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render(string(blockChar)))
+	}
+
+	// Add current elevation marker and value
+	now := time.Now()
+	if currentSample := trace.CurrentElevation(now); currentSample != nil {
+		nowStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+		sb.WriteString(nowStyle.Render(fmt.Sprintf(" now: %.0f°", currentSample.Elevation)))
+	}
+
+	return sb.String()
+}
+
+// renderShimmerSparkline renders a loading animation sparkline.
+func (m MissionDetailModel) renderShimmerSparkline(msg string) string {
+	var sb strings.Builder
+
+	// Create shimmer effect using animTick
+	offset := m.animTick % SparklineWidth
+	for i := 0; i < SparklineWidth; i++ {
+		// Calculate brightness based on position relative to shimmer wave
+		dist := (i - offset + SparklineWidth) % SparklineWidth
+		var gray int
+		if dist < 8 {
+			gray = 60 + dist*8
+		} else {
+			gray = 60
+		}
+		color := fmt.Sprintf("#%02x%02x%02x", gray, gray, gray)
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color(color)).Render("▄"))
+	}
+
+	// Append message
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	sb.WriteString(" ")
+	sb.WriteString(dimStyle.Render(msg))
+
+	return sb.String()
+}
+
+// interpolateElevColor returns RGB color for elevation value t in [0, 1].
+// Gradient: low (dark blue) → mid (blue) → high (cyan).
+func interpolateElevColor(t float64) (uint8, uint8, uint8) {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+
+	var r, g, b uint8
+	if t < 0.5 {
+		// Interpolate from low to mid
+		s := t * 2 // Scale to 0-1
+		r = uint8(float64(elevColorLow[0])*(1-s) + float64(elevColorMid[0])*s)
+		g = uint8(float64(elevColorLow[1])*(1-s) + float64(elevColorMid[1])*s)
+		b = uint8(float64(elevColorLow[2])*(1-s) + float64(elevColorMid[2])*s)
+	} else {
+		// Interpolate from mid to high
+		s := (t - 0.5) * 2 // Scale to 0-1
+		r = uint8(float64(elevColorMid[0])*(1-s) + float64(elevColorHigh[0])*s)
+		g = uint8(float64(elevColorMid[1])*(1-s) + float64(elevColorHigh[1])*s)
+		b = uint8(float64(elevColorMid[2])*(1-s) + float64(elevColorHigh[2])*s)
+	}
+
+	return r, g, b
+}
+
+// resampleElevation resamples elevation samples to a fixed number of buckets.
+func resampleElevation(samples []dsn.ElevationSample, width int) []float64 {
+	if len(samples) == 0 || width <= 0 {
+		return nil
+	}
+
+	result := make([]float64, width)
+	samplesPerBucket := float64(len(samples)) / float64(width)
+
+	for i := 0; i < width; i++ {
+		// Average samples in this bucket
+		startIdx := int(float64(i) * samplesPerBucket)
+		endIdx := int(float64(i+1) * samplesPerBucket)
+		if endIdx > len(samples) {
+			endIdx = len(samples)
+		}
+		if startIdx >= endIdx {
+			startIdx = endIdx - 1
+		}
+		if startIdx < 0 {
+			startIdx = 0
+		}
+
+		sum := 0.0
+		count := 0
+		for j := startIdx; j < endIdx; j++ {
+			sum += samples[j].Elevation
+			count++
+		}
+		if count > 0 {
+			result[i] = sum / float64(count)
+		}
+	}
+
+	return result
 }
 
 // SelectedSpacecraftID returns the currently selected spacecraft ID.

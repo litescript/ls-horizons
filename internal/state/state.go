@@ -57,6 +57,15 @@ type CachedPassPlan struct {
 	Loading   bool // True if currently being fetched
 }
 
+// CachedElevationTrace stores an elevation trace with metadata.
+type CachedElevationTrace struct {
+	Trace     *dsn.ElevationTrace
+	UpdatedAt time.Time
+	Error     error
+	Loading   bool        // True if currently being fetched
+	Complex   dsn.Complex // Which complex this trace was computed for
+}
+
 // linkKey uniquely identifies a spacecraft link.
 type linkKey struct {
 	spacecraft string
@@ -98,6 +107,9 @@ type Manager struct {
 	// Pass plan cache - stores plans for ALL spacecraft, not just focused
 	passPlanCache map[int]*CachedPassPlan
 
+	// Elevation trace cache - stores traces for ALL spacecraft
+	elevTraceCache map[int]*CachedElevationTrace
+
 	// Configuration
 	refreshInterval time.Duration
 }
@@ -136,6 +148,7 @@ func NewManager(cfg Config) *Manager {
 		complexLoads:      make(map[dsn.Complex]dsn.ComplexLoad),
 		prevLinks:         make(map[linkKey]dsn.Link),
 		passPlanCache:     make(map[int]*CachedPassPlan),
+		elevTraceCache:    make(map[int]*CachedElevationTrace),
 	}
 }
 
@@ -304,6 +317,13 @@ type Snapshot struct {
 	PassPlanError       error
 	PassPlanLoading     bool
 	FocusedSpacecraftID int
+
+	// Elevation trace state for focused spacecraft
+	ElevationTrace          *dsn.ElevationTrace
+	ElevationTraceUpdatedAt time.Time
+	ElevationTraceError     error
+	ElevationTraceLoading   bool
+	ElevationTraceComplex   dsn.Complex
 }
 
 // Snapshot returns a consistent snapshot of current state.
@@ -342,21 +362,40 @@ func (m *Manager) Snapshot() Snapshot {
 		passPlanLoading = cached.Loading
 	}
 
+	// Get elevation trace for focused spacecraft from cache
+	var elevTrace *dsn.ElevationTrace
+	var elevTraceUpdatedAt time.Time
+	var elevTraceError error
+	var elevTraceLoading bool
+	var elevTraceComplex dsn.Complex
+	if cached, ok := m.elevTraceCache[m.focusedSpacecraftID]; ok {
+		elevTrace = cached.Trace
+		elevTraceUpdatedAt = cached.UpdatedAt
+		elevTraceError = cached.Error
+		elevTraceLoading = cached.Loading
+		elevTraceComplex = cached.Complex
+	}
+
 	return Snapshot{
-		Data:                m.current,
-		LastFetch:           m.lastFetch,
-		NextRefresh:         m.nextRefresh,
-		LastError:           m.lastError,
-		FetchDuration:       m.fetchDuration,
-		ComplexLoads:        loads,
-		Spacecraft:          sc,
-		SkyObjects:          skyObjs,
-		Events:              events,
-		PassPlan:            passPlan,
-		PassPlanUpdatedAt:   passPlanUpdatedAt,
-		PassPlanError:       passPlanError,
-		PassPlanLoading:     passPlanLoading,
-		FocusedSpacecraftID: m.focusedSpacecraftID,
+		Data:                    m.current,
+		LastFetch:               m.lastFetch,
+		NextRefresh:             m.nextRefresh,
+		LastError:               m.lastError,
+		FetchDuration:           m.fetchDuration,
+		ComplexLoads:            loads,
+		Spacecraft:              sc,
+		SkyObjects:              skyObjs,
+		Events:                  events,
+		PassPlan:                passPlan,
+		PassPlanUpdatedAt:       passPlanUpdatedAt,
+		PassPlanError:           passPlanError,
+		PassPlanLoading:         passPlanLoading,
+		FocusedSpacecraftID:     m.focusedSpacecraftID,
+		ElevationTrace:          elevTrace,
+		ElevationTraceUpdatedAt: elevTraceUpdatedAt,
+		ElevationTraceError:     elevTraceError,
+		ElevationTraceLoading:   elevTraceLoading,
+		ElevationTraceComplex:   elevTraceComplex,
 	}
 }
 
@@ -471,6 +510,9 @@ func (m *Manager) HasData() bool {
 // PassPlanTTL is how long a computed pass plan remains valid.
 const PassPlanTTL = 5 * time.Minute
 
+// ElevationTraceTTL is how long a computed elevation trace remains valid.
+const ElevationTraceTTL = 2 * time.Minute
+
 // SetFocusedSpacecraft updates the focused spacecraft for pass planning.
 func (m *Manager) SetFocusedSpacecraft(spacecraftID int) {
 	m.mu.Lock()
@@ -567,4 +609,84 @@ func (m *Manager) GetAllSpacecraftIDs() []int {
 		ids = append(ids, sc.ID)
 	}
 	return ids
+}
+
+// SetElevationTraceLoading marks a spacecraft's elevation trace as loading.
+func (m *Manager) SetElevationTraceLoading(spacecraftID int, loading bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cached, ok := m.elevTraceCache[spacecraftID]
+	if !ok {
+		cached = &CachedElevationTrace{}
+		m.elevTraceCache[spacecraftID] = cached
+	}
+	cached.Loading = loading
+}
+
+// UpdateElevationTrace sets the cached elevation trace for a spacecraft.
+func (m *Manager) UpdateElevationTrace(spacecraftID int, trace *dsn.ElevationTrace, complex dsn.Complex, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.elevTraceCache[spacecraftID] = &CachedElevationTrace{
+		Trace:     trace,
+		UpdatedAt: time.Now(),
+		Error:     err,
+		Loading:   false,
+		Complex:   complex,
+	}
+}
+
+// GetCachedElevationTrace returns the cached elevation trace for a spacecraft.
+func (m *Manager) GetCachedElevationTrace(spacecraftID int) *CachedElevationTrace {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if cached, ok := m.elevTraceCache[spacecraftID]; ok {
+		// Return a copy
+		return &CachedElevationTrace{
+			Trace:     cached.Trace,
+			UpdatedAt: cached.UpdatedAt,
+			Error:     cached.Error,
+			Loading:   cached.Loading,
+			Complex:   cached.Complex,
+		}
+	}
+	return nil
+}
+
+// NeedsElevationTraceRefresh returns true if a spacecraft's elevation trace should be recomputed.
+// It also checks if the target complex has changed.
+func (m *Manager) NeedsElevationTraceRefresh(spacecraftID int, targetComplex dsn.Complex) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if spacecraftID == 0 {
+		return false
+	}
+
+	cached, ok := m.elevTraceCache[spacecraftID]
+	if !ok {
+		return true // No cache entry
+	}
+
+	if cached.Loading {
+		return false // Already loading
+	}
+
+	if cached.Trace == nil && cached.Error == nil {
+		return true // No trace yet
+	}
+
+	// If complex changed, we need to recompute
+	if targetComplex != "" && cached.Complex != targetComplex {
+		return true
+	}
+
+	if time.Since(cached.UpdatedAt) > ElevationTraceTTL {
+		return true // TTL expired
+	}
+
+	return false
 }
