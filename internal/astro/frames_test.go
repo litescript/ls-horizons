@@ -172,14 +172,14 @@ func TestScaleModes(t *testing.T) {
 
 func TestKmToAU(t *testing.T) {
 	tests := []struct {
-		km      float64
-		wantAU  float64
-		tolPct  float64 // tolerance as percentage
+		km     float64
+		wantAU float64
+		tolPct float64 // tolerance as percentage
 	}{
-		{AU, 1.0, 0.001},                    // 1 AU in km = 1 AU
-		{AU * 5.2, 5.2, 0.001},              // Jupiter distance
-		{AU * 30.07, 30.07, 0.001},          // Neptune distance
-		{24e9, 24e9 / AU, 0.001},            // ~160 AU (Voyager range)
+		{AU, 1.0, 0.001},           // 1 AU in km = 1 AU
+		{AU * 5.2, 5.2, 0.001},     // Jupiter distance
+		{AU * 30.07, 30.07, 0.001}, // Neptune distance
+		{24e9, 24e9 / AU, 0.001},   // ~160 AU (Voyager range)
 	}
 
 	for _, tt := range tests {
@@ -308,5 +308,145 @@ func TestEclipticLongitude(t *testing.T) {
 		if math.Abs(got-tt.wantDeg) > tt.tol {
 			t.Errorf("EclipticLongitude(%v) = %.2f°, want %.2f°", tt.v, got, tt.wantDeg)
 		}
+	}
+}
+
+func TestProjectStarEclipticTopDown(t *testing.T) {
+	cfg := ProjectionConfig{
+		Scale:             1.0,
+		Mode:              ScaleLogR,
+		StarShellRadiusAU: 100.0,
+	}
+
+	tests := []struct {
+		name       string
+		raDeg      float64
+		decDeg     float64
+		wantXSign  int // -1, 0, +1 for expected sign
+		wantYSign  int
+		wantRShell bool // expect R close to shell radius
+	}{
+		{
+			name:       "RA=0, Dec=0 (vernal equinox)",
+			raDeg:      0,
+			decDeg:     0,
+			wantXSign:  +1, // Should project to positive X
+			wantYSign:  0,  // Near zero (equator on ecliptic plane)
+			wantRShell: true,
+		},
+		{
+			name:       "RA=90°, Dec=0 (summer solstice direction)",
+			raDeg:      90,
+			decDeg:     0,
+			wantXSign:  0,  // Near zero
+			wantYSign:  +1, // Should project to positive Y
+			wantRShell: true,
+		},
+		{
+			name:       "RA=180°, Dec=0 (autumnal equinox)",
+			raDeg:      180,
+			decDeg:     0,
+			wantXSign:  -1, // Should project to negative X
+			wantYSign:  0,
+			wantRShell: true,
+		},
+		{
+			name:       "RA=270°, Dec=0 (winter solstice direction)",
+			raDeg:      270,
+			decDeg:     0,
+			wantXSign:  0,
+			wantYSign:  -1, // Should project to negative Y
+			wantRShell: true,
+		},
+		{
+			name:       "RA=0, Dec=+45 (northern)",
+			raDeg:      0,
+			decDeg:     45,
+			wantXSign:  +1, // Still mostly positive X
+			wantYSign:  0,  // Some Y due to obliquity tilt
+			wantRShell: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ProjectStarEclipticTopDown(tt.raDeg, tt.decDeg, cfg)
+
+			// Check X sign
+			if tt.wantXSign != 0 {
+				if (tt.wantXSign > 0 && got.X <= 0) || (tt.wantXSign < 0 && got.X >= 0) {
+					t.Errorf("X = %.4f, expected sign %+d", got.X, tt.wantXSign)
+				}
+			}
+
+			// Check Y sign
+			if tt.wantYSign != 0 {
+				if (tt.wantYSign > 0 && got.Y <= 0) || (tt.wantYSign < 0 && got.Y >= 0) {
+					t.Errorf("Y = %.4f, expected sign %+d", got.Y, tt.wantYSign)
+				}
+			}
+
+			// Check R is consistent with shell radius
+			if tt.wantRShell {
+				// R should be shell radius (100 AU)
+				if math.Abs(got.R-100.0) > 1.0 {
+					t.Errorf("R = %.4f, want ~100.0 (shell radius)", got.R)
+				}
+			}
+		})
+	}
+}
+
+func TestProjectStarEclipticTopDown_OppositeStars(t *testing.T) {
+	cfg := ProjectionConfig{
+		Scale:             1.0,
+		Mode:              ScaleLogR,
+		StarShellRadiusAU: 100.0,
+	}
+
+	// Two stars at opposite RA positions should be on opposite sides
+	star1 := ProjectStarEclipticTopDown(0, 0, cfg)   // RA=0
+	star2 := ProjectStarEclipticTopDown(180, 0, cfg) // RA=180
+
+	// X should have opposite signs
+	if star1.X*star2.X >= 0 {
+		t.Errorf("stars at RA=0 and RA=180 should have opposite X: got %.4f and %.4f", star1.X, star2.X)
+	}
+
+	// Both should have similar R (same shell)
+	if math.Abs(star1.R-star2.R) > 0.1 {
+		t.Errorf("stars should have same R: got %.4f and %.4f", star1.R, star2.R)
+	}
+}
+
+func TestProjectStarEclipticTopDown_DefaultShellRadius(t *testing.T) {
+	// With StarShellRadiusAU = 0, should default to 100 AU
+	cfg := ProjectionConfig{
+		Scale:             1.0,
+		Mode:              ScaleLogR,
+		StarShellRadiusAU: 0, // Should default to 100
+	}
+
+	got := ProjectStarEclipticTopDown(0, 0, cfg)
+
+	// R should be close to default (100 AU)
+	if math.Abs(got.R-DefaultStarShellRadiusAU) > 1.0 {
+		t.Errorf("R = %.4f with zero StarShellRadiusAU, expected ~%.1f", got.R, DefaultStarShellRadiusAU)
+	}
+}
+
+func TestProjectStarEclipticTopDown_CustomShellRadius(t *testing.T) {
+	// Test with custom shell radius
+	cfg := ProjectionConfig{
+		Scale:             1.0,
+		Mode:              ScaleLogR,
+		StarShellRadiusAU: 50.0, // Custom radius
+	}
+
+	got := ProjectStarEclipticTopDown(0, 0, cfg)
+
+	// R should be close to custom radius
+	if math.Abs(got.R-50.0) > 0.5 {
+		t.Errorf("R = %.4f with StarShellRadiusAU=50, expected ~50.0", got.R)
 	}
 }

@@ -49,7 +49,7 @@ func TestComputePassPlan_SinglePass(t *testing.T) {
 		// RA changes slowly, simulating sidereal motion
 		hours := t.Sub(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)).Hours()
 		ra = math.Mod(hours*15, 360) // 15°/hour = sidereal rate
-		dec = 35.0                    // Fixed declination
+		dec = 35.0                   // Fixed declination
 		return ra, dec
 	}
 

@@ -47,6 +47,18 @@ const (
 	NAIFCapstone         TargetID = -186
 	NAIFHopeMars         TargetID = -211
 	NAIFIXPE             TargetID = -196
+	NAIFChandra          TargetID = -151
+	NAIFHubble           TargetID = -48
+	NAIFACE              TargetID = -92
+	NAIFMMS              TargetID = -135
+	NAIFGeotail          TargetID = -148
+	NAIFIBEX             TargetID = -169
+	NAIFSpitzer          TargetID = -79
+	NAIFNUSTAR           TargetID = -166
+	NAIFSuzaku           TargetID = -150
+	NAIFXMM              TargetID = -125
+	NAIFINTEGRAL         TargetID = -130
+	NAIFFermi            TargetID = -160
 )
 
 // Targets is the canonical list of tracked spacecraft with their NAIF mappings.
@@ -100,10 +112,22 @@ var Targets = []TargetInfo{
 	{Code: "JWST", Name: "James Webb Space Telescope", NAIFID: NAIFJWST},
 	{Code: "GAIA", Name: "Gaia", NAIFID: NAIFGAIA},
 
-	// Earth Orbit
+	// Earth Orbit / X-ray / Gamma-ray Observatories
 	{Code: "TESS", Name: "TESS", NAIFID: NAIFTESS},
 	{Code: "SWOT", Name: "SWOT", NAIFID: NAIFSWOT},
 	{Code: "IXPE", Name: "IXPE", NAIFID: NAIFIXPE},
+	{Code: "CHDR", Name: "Chandra", NAIFID: NAIFChandra, Aliases: []string{"CXO", "CHANDRA"}},
+	{Code: "HST", Name: "Hubble", NAIFID: NAIFHubble, Aliases: []string{"HUBBLE"}},
+	{Code: "ACE", Name: "ACE", NAIFID: NAIFACE},
+	{Code: "MMS", Name: "MMS", NAIFID: NAIFMMS},
+	{Code: "GTAIL", Name: "Geotail", NAIFID: NAIFGeotail, Aliases: []string{"GEOTAIL"}},
+	{Code: "IBEX", Name: "IBEX", NAIFID: NAIFIBEX},
+	{Code: "SPTZ", Name: "Spitzer", NAIFID: NAIFSpitzer, Aliases: []string{"SPITZER"}},
+	{Code: "NUSTAR", Name: "NuSTAR", NAIFID: NAIFNUSTAR},
+	{Code: "SUZAKU", Name: "Suzaku", NAIFID: NAIFSuzaku},
+	{Code: "XMM", Name: "XMM-Newton", NAIFID: NAIFXMM, Aliases: []string{"XMM-NEWTON"}},
+	{Code: "INTEG", Name: "INTEGRAL", NAIFID: NAIFINTEGRAL, Aliases: []string{"INTEGRAL"}},
+	{Code: "FERMI", Name: "Fermi", NAIFID: NAIFFermi, Aliases: []string{"GLAST"}},
 }
 
 // TargetsByNAIF maps NAIF IDs to target info for quick lookup.
@@ -127,6 +151,71 @@ var TargetsByCode = func() map[string]TargetInfo {
 	return m
 }()
 
+// TargetsByName maps spacecraft names (lowercase) to target info.
+// Includes full names, codes, and common DSN variations.
+var TargetsByName = func() map[string]TargetInfo {
+	m := make(map[string]TargetInfo, len(Targets)*3)
+	for _, t := range Targets {
+		// Add by full name
+		m[normalizeName(t.Name)] = t
+		// Add by code (DSN often uses code as name)
+		m[normalizeName(t.Code)] = t
+		// Add aliases
+		for _, alias := range t.Aliases {
+			m[normalizeName(alias)] = t
+		}
+	}
+	// Add common DSN name variations that don't match our canonical names
+	addVariation := func(variation string, code string) {
+		if t, ok := TargetsByCode[code]; ok {
+			m[normalizeName(variation)] = t
+		}
+	}
+	// DSN often uses these variations
+	addVariation("MSL", "MSL")           // Curiosity
+	addVariation("M2020", "M20")         // Perseverance
+	addVariation("MARS 2020", "M20")     // Perseverance
+	addVariation("PSP", "SPP")           // Parker Solar Probe
+	addVariation("PARKER", "SPP")        // Parker Solar Probe
+	addVariation("NH", "NHPC")           // New Horizons
+	addVariation("EUROPA", "EURC")       // Europa Clipper
+	addVariation("BEPICOLOMBO", "BEPI")  // BepiColombo (one word)
+	addVariation("BEPI COLOMBO", "BEPI") // BepiColombo (two words)
+	addVariation("STEREO AHEAD", "STA")  // STEREO-A
+	addVariation("STEREO BEHIND", "STB") // STEREO-B
+	addVariation("STEREO-AHEAD", "STA")  // STEREO-A
+	addVariation("STEREO-BEHIND", "STB") // STEREO-B
+	addVariation("JWST", "JWST")         // James Webb
+	addVariation("WEBB", "JWST")         // James Webb
+	addVariation("JAMES WEBB", "JWST")   // James Webb
+	addVariation("CURIOSITY", "MSL")     // Curiosity Rover
+	addVariation("PERSEVERANCE", "M20")  // Perseverance Rover
+	addVariation("KPLO", "KPLO")         // Korea Lunar
+	addVariation("DANURI", "KPLO")       // Korea Lunar (Korean name)
+	addVariation("CH-3", "CH3")          // Chandrayaan-3
+	addVariation("CHANDRAYAAN 3", "CH3") // Chandrayaan-3
+	addVariation("EXOMARS", "TGO")       // ExoMars TGO
+	addVariation("TRACE GAS ORBITER", "TGO")
+	addVariation("HOPE", "EMM")      // Hope/Emirates Mars Mission
+	addVariation("AL-AMAL", "EMM")   // Hope (Arabic name)
+	addVariation("CAPSTONE", "CAPS") // Capstone
+	return m
+}()
+
+// normalizeName converts a spacecraft name to lowercase for matching.
+func normalizeName(name string) string {
+	// Simple lowercase, handles most cases
+	result := make([]byte, 0, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= 'A' && c <= 'Z' {
+			c = c + ('a' - 'A')
+		}
+		result = append(result, c)
+	}
+	return string(result)
+}
+
 // GetNAIFID returns the NAIF ID for a DSN spacecraft code, or 0 if unknown.
 func GetNAIFID(code string) TargetID {
 	if t, ok := TargetsByCode[code]; ok {
@@ -145,4 +234,18 @@ func GetTargetByCode(code string) (TargetInfo, bool) {
 func GetTargetByNAIF(id TargetID) (TargetInfo, bool) {
 	t, ok := TargetsByNAIF[id]
 	return t, ok
+}
+
+// GetTargetByName returns target info for a spacecraft name (case-insensitive).
+func GetTargetByName(name string) (TargetInfo, bool) {
+	t, ok := TargetsByName[normalizeName(name)]
+	return t, ok
+}
+
+// GetNAIFIDByName returns the NAIF ID for a spacecraft name, or 0 if unknown.
+func GetNAIFIDByName(name string) TargetID {
+	if t, ok := GetTargetByName(name); ok {
+		return t.NAIFID
+	}
+	return 0
 }

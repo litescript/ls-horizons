@@ -8,9 +8,9 @@ import (
 
 // testObservers for visibility testing
 var testObservers = map[string]Observer{
-	"goldstone": {LatDeg: 35.4267, LonDeg: -116.8900, Name: "Goldstone"},
-	"canberra":  {LatDeg: -35.4014, LonDeg: 148.9817, Name: "Canberra"},
-	"madrid":    {LatDeg: 40.4314, LonDeg: -4.2481, Name: "Madrid"},
+	"goldstone":  {LatDeg: 35.4267, LonDeg: -116.8900, Name: "Goldstone"},
+	"canberra":   {LatDeg: -35.4014, LonDeg: 148.9817, Name: "Canberra"},
+	"madrid":     {LatDeg: 40.4314, LonDeg: -4.2481, Name: "Madrid"},
 	"north_pole": {LatDeg: 89.0, LonDeg: 0.0, Name: "North Pole"},
 }
 
@@ -19,11 +19,11 @@ var testStars = map[string]struct {
 	RAdeg  float64
 	DecDeg float64
 }{
-	"vega":     {RAdeg: 279.2347, DecDeg: 38.7837},   // Alpha Lyrae
-	"sirius":   {RAdeg: 101.2875, DecDeg: -16.7161},  // Alpha CMa
-	"polaris":  {RAdeg: 37.9542, DecDeg: 89.2641},    // North star
-	"canopus":  {RAdeg: 95.9879, DecDeg: -52.6957},   // Alpha Car
-	"arcturus": {RAdeg: 213.9150, DecDeg: 19.1825},   // Alpha Boo
+	"vega":     {RAdeg: 279.2347, DecDeg: 38.7837},  // Alpha Lyrae
+	"sirius":   {RAdeg: 101.2875, DecDeg: -16.7161}, // Alpha CMa
+	"polaris":  {RAdeg: 37.9542, DecDeg: 89.2641},   // North star
+	"canopus":  {RAdeg: 95.9879, DecDeg: -52.6957},  // Alpha Car
+	"arcturus": {RAdeg: 213.9150, DecDeg: 19.1825},  // Alpha Boo
 }
 
 func TestCurrentElevation(t *testing.T) {

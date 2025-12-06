@@ -179,7 +179,6 @@ func (vc *VisibilityCache) UpdateVisibility(code string, raDeg, decDeg float64) 
 	return nil
 }
 
-
 // Clear removes all cached visibility data.
 func (vc *VisibilityCache) Clear() {
 	vc.mu.Lock()

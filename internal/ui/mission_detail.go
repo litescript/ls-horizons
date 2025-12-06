@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/ephem"
 	"github.com/litescript/ls-horizons/internal/state"
 )
 
@@ -21,12 +22,14 @@ type MissionDetailModel struct {
 	scrollY       int
 	showPassPanel bool
 	passPlan      *dsn.PassPlan
+	animTick      int // Animation tick for shimmer effects
 }
 
 // NewMissionDetailModel creates a new mission detail model.
 func NewMissionDetailModel() MissionDetailModel {
 	return MissionDetailModel{
-		selectedID: -1,
+		selectedID:    -1,
+		showPassPanel: true, // Default ON per spec
 	}
 }
 
@@ -37,20 +40,37 @@ func (m MissionDetailModel) SetSize(width, height int) MissionDetailModel {
 	return m
 }
 
+// SetAnimTick updates the animation tick for shimmer effects.
+func (m MissionDetailModel) SetAnimTick(tick int) MissionDetailModel {
+	m.animTick = tick
+	return m
+}
+
 // UpdateData updates with new data snapshot.
 func (m MissionDetailModel) UpdateData(snapshot state.Snapshot) MissionDetailModel {
 	m.snapshot = snapshot
 
-	// Auto-select first spacecraft if none selected
+	// Auto-select first valid spacecraft if none selected (skip stations like DSS)
 	if m.selectedID < 0 && len(snapshot.Spacecraft) > 0 {
-		m.selectedID = snapshot.Spacecraft[0].ID
+		for _, sc := range snapshot.Spacecraft {
+			if !isStationNotSpacecraft(sc.Name) {
+				m.selectedID = sc.ID
+				break
+			}
+		}
 	}
 
 	return m
 }
 
+// SpacecraftChangedMsg signals the selected spacecraft changed.
+type SpacecraftChangedMsg struct {
+	SpacecraftID int
+}
+
 // Update handles messages.
 func (m MissionDetailModel) Update(msg tea.Msg) (MissionDetailModel, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -62,25 +82,47 @@ func (m MissionDetailModel) Update(msg tea.Msg) (MissionDetailModel, tea.Cmd) {
 		case "down", "j":
 			m.scrollY++
 		case "left", "[":
+			oldID := m.selectedID
 			m.selectPrevSpacecraft()
+			if m.selectedID != oldID {
+				newID := m.selectedID // Capture value explicitly for closure
+				cmd = func() tea.Msg {
+					return SpacecraftChangedMsg{SpacecraftID: newID}
+				}
+			}
 		case "right", "]":
+			oldID := m.selectedID
 			m.selectNextSpacecraft()
+			if m.selectedID != oldID {
+				newID := m.selectedID // Capture value explicitly for closure
+				cmd = func() tea.Msg {
+					return SpacecraftChangedMsg{SpacecraftID: newID}
+				}
+			}
 		case "h":
 			m.showPassPanel = !m.showPassPanel
 		}
 	}
-	return m, nil
+	return m, cmd
 }
 
 func (m *MissionDetailModel) selectNextSpacecraft() {
 	if len(m.snapshot.Spacecraft) == 0 {
 		return
 	}
-	for i, sc := range m.snapshot.Spacecraft {
-		if sc.ID == m.selectedID && i < len(m.snapshot.Spacecraft)-1 {
-			m.selectedID = m.snapshot.Spacecraft[i+1].ID
+	// Find current index, then find next valid (non-station) spacecraft
+	foundCurrent := false
+	for _, sc := range m.snapshot.Spacecraft {
+		if isStationNotSpacecraft(sc.Name) {
+			continue
+		}
+		if foundCurrent {
+			m.selectedID = sc.ID
 			m.scrollY = 0
 			return
+		}
+		if sc.ID == m.selectedID {
+			foundCurrent = true
 		}
 	}
 }
@@ -89,12 +131,20 @@ func (m *MissionDetailModel) selectPrevSpacecraft() {
 	if len(m.snapshot.Spacecraft) == 0 {
 		return
 	}
-	for i, sc := range m.snapshot.Spacecraft {
-		if sc.ID == m.selectedID && i > 0 {
-			m.selectedID = m.snapshot.Spacecraft[i-1].ID
-			m.scrollY = 0
+	// Find previous valid (non-station) spacecraft
+	var prevID int
+	for _, sc := range m.snapshot.Spacecraft {
+		if isStationNotSpacecraft(sc.Name) {
+			continue
+		}
+		if sc.ID == m.selectedID {
+			if prevID != 0 {
+				m.selectedID = prevID
+				m.scrollY = 0
+			}
 			return
 		}
+		prevID = sc.ID
 	}
 }
 
@@ -120,14 +170,14 @@ func (m MissionDetailModel) View() string {
 		return b.String()
 	}
 
-	// Pass panel (if enabled)
-	if m.showPassPanel {
-		b.WriteString(m.renderPassPanel())
-		b.WriteString("\n")
-	}
-
-	// Spacecraft details
+	// Spacecraft details first
 	b.WriteString(m.renderSpacecraftDetails(selected))
+
+	// Pass panel below details (if enabled)
+	if m.showPassPanel {
+		b.WriteString("\n")
+		b.WriteString(m.renderPassPanel())
+	}
 
 	return b.String()
 }
@@ -152,6 +202,10 @@ func (m MissionDetailModel) renderSpacecraftSelector() string {
 	b.WriteString("← ")
 
 	for _, sc := range m.snapshot.Spacecraft {
+		// Skip station entries (DSS) - they're not spacecraft
+		if isStationNotSpacecraft(sc.Name) {
+			continue
+		}
 		if sc.ID == m.selectedID {
 			b.WriteString(selectedStyle.Render(sc.Name))
 		} else {
@@ -179,10 +233,14 @@ func (m MissionDetailModel) renderSpacecraftDetails(sc *dsn.Spacecraft) string {
 	valueStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252"))
 
-	// Name header
-	b.WriteString(headerStyle.Render(sc.Name))
+	// Name header - use full name from registry if available
+	displayName := sc.Name
+	if target, ok := ephem.GetTargetByName(sc.Name); ok {
+		displayName = target.Name
+	}
+	b.WriteString(headerStyle.Render(displayName))
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", len(sc.Name)+4))
+	b.WriteString(strings.Repeat("─", len(displayName)+4))
 	b.WriteString("\n\n")
 
 	// Core metrics
@@ -342,8 +400,25 @@ func (m MissionDetailModel) renderPassPanel() string {
 	b.WriteString(strings.Repeat("─", 60))
 	b.WriteString("\n\n")
 
-	if m.passPlan == nil || len(m.passPlan.Passes) == 0 {
-		b.WriteString(dimStyle.Render("  No passes computed. Waiting for ephemeris data..."))
+	// Use pass plan from snapshot (centralized state)
+	passPlan := m.snapshot.PassPlan
+	if passPlan == nil || len(passPlan.Passes) == 0 {
+		if m.snapshot.PassPlanError != nil {
+			errStr := m.snapshot.PassPlanError.Error()
+			var msg string
+			if strings.Contains(errStr, "unknown spacecraft") {
+				msg = "  Ephemeris data not available for this mission"
+			} else {
+				msg = fmt.Sprintf("  %v", m.snapshot.PassPlanError)
+			}
+			b.WriteString(dimStyle.Render(msg))
+		} else if m.snapshot.PassPlanLoading {
+			// Show shimmer animation while loading
+			b.WriteString("  ")
+			b.WriteString(m.renderShimmerText("Computing pass schedule..."))
+		} else {
+			b.WriteString(dimStyle.Render("  Computing pass schedule..."))
+		}
 		b.WriteString("\n")
 		return b.String()
 	}
@@ -358,7 +433,7 @@ func (m MissionDetailModel) renderPassPanel() string {
 	complexes := []dsn.Complex{dsn.ComplexGoldstone, dsn.ComplexCanberra, dsn.ComplexMadrid}
 
 	for _, c := range complexes {
-		passes := m.passPlan.GetPassesForComplex(c)
+		passes := passPlan.GetPassesForComplex(c)
 		shortName := dsn.ComplexShortName(c)
 
 		if len(passes) == 0 {
@@ -421,7 +496,7 @@ func (m MissionDetailModel) renderPassPanel() string {
 
 	// Show next pass summary
 	b.WriteString("\n")
-	if current := m.passPlan.GetCurrentPass(); current != nil {
+	if current := passPlan.GetCurrentPass(); current != nil {
 		remaining := time.Until(current.End)
 		b.WriteString(nowStyle.Render(fmt.Sprintf("  ▶ Active: %s pass ends in %s",
 			dsn.ComplexShortName(current.Complex),
@@ -429,7 +504,7 @@ func (m MissionDetailModel) renderPassPanel() string {
 		b.WriteString("\n")
 	}
 
-	if next := m.passPlan.GetNextPass(); next != nil {
+	if next := passPlan.GetNextPass(); next != nil {
 		until := time.Until(next.Start)
 		b.WriteString(nextStyle.Render(fmt.Sprintf("  ▷ Next: %s pass in %s",
 			dsn.ComplexShortName(next.Complex),
@@ -438,6 +513,14 @@ func (m MissionDetailModel) renderPassPanel() string {
 	}
 
 	return b.String()
+}
+
+// isStationNotSpacecraft returns true if the name is a station designator, not a spacecraft.
+func isStationNotSpacecraft(name string) bool {
+	// DSS (Deep Space Station) entries are stations, not spacecraft
+	// They sometimes appear in DSN data but aren't useful for pass planning
+	upper := strings.ToUpper(name)
+	return upper == "DSS" || strings.HasPrefix(upper, "DSS-") || strings.HasPrefix(upper, "DSS ")
 }
 
 // formatDuration formats a duration for display.
@@ -457,4 +540,49 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dh", hours)
 	}
 	return fmt.Sprintf("%dh %dm", hours, mins)
+}
+
+// renderShimmerText renders text with a subtle moving shine effect.
+func (m MissionDetailModel) renderShimmerText(text string) string {
+	runes := []rune(text)
+	textLen := len(runes)
+	if textLen == 0 {
+		return ""
+	}
+
+	// Shimmer sweeps smoothly across
+	pos := m.animTick % (textLen + 8) // A bit of padding for smooth entry/exit
+
+	var result strings.Builder
+
+	for i, r := range runes {
+		// Distance from shimmer center
+		dist := i - pos + 4
+		if dist < 0 {
+			dist = -dist
+		}
+
+		// Subtle purple gradient - gentle highlight that fades smoothly
+		// Base is dim purple, highlight is brighter lavender
+		var r8, g8, b8 int
+		if dist <= 1 {
+			// Soft highlight - light lavender
+			r8, g8, b8 = 180, 160, 220
+		} else if dist <= 3 {
+			// Mid transition
+			r8, g8, b8 = 140, 120, 180
+		} else if dist <= 5 {
+			// Fading
+			r8, g8, b8 = 110, 90, 150
+		} else {
+			// Base dim purple
+			r8, g8, b8 = 80, 70, 120
+		}
+
+		hexColor := fmt.Sprintf("#%02X%02X%02X", r8, g8, b8)
+		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
+		result.WriteString(style.Render(string(r)))
+	}
+
+	return result.String()
 }

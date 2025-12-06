@@ -49,6 +49,14 @@ type TimeSeries struct {
 	Value     float64
 }
 
+// CachedPassPlan stores a pass plan with metadata.
+type CachedPassPlan struct {
+	Plan      *dsn.PassPlan
+	UpdatedAt time.Time
+	Error     error
+	Loading   bool // True if currently being fetched
+}
+
 // linkKey uniquely identifies a spacecraft link.
 type linkKey struct {
 	spacecraft string
@@ -83,6 +91,12 @@ type Manager struct {
 	// Derived/cached data
 	complexLoads map[dsn.Complex]dsn.ComplexLoad
 	spacecraft   []dsn.Spacecraft
+
+	// Pass planning state
+	focusedSpacecraftID int // Currently focused spacecraft for pass planning
+
+	// Pass plan cache - stores plans for ALL spacecraft, not just focused
+	passPlanCache map[int]*CachedPassPlan
 
 	// Configuration
 	refreshInterval time.Duration
@@ -121,6 +135,7 @@ func NewManager(cfg Config) *Manager {
 		spacecraftHistory: make(map[int]*SpacecraftHistory),
 		complexLoads:      make(map[dsn.Complex]dsn.ComplexLoad),
 		prevLinks:         make(map[linkKey]dsn.Link),
+		passPlanCache:     make(map[int]*CachedPassPlan),
 	}
 }
 
@@ -282,6 +297,13 @@ type Snapshot struct {
 	Spacecraft    []dsn.Spacecraft
 	SkyObjects    []dsn.SkyObject
 	Events        []Event
+
+	// Pass planning state for focused spacecraft
+	PassPlan            *dsn.PassPlan
+	PassPlanUpdatedAt   time.Time
+	PassPlanError       error
+	PassPlanLoading     bool
+	FocusedSpacecraftID int
 }
 
 // Snapshot returns a consistent snapshot of current state.
@@ -308,16 +330,33 @@ func (m *Manager) Snapshot() Snapshot {
 	// Copy events in chronological order
 	events := m.getEventsOrdered()
 
+	// Get pass plan for focused spacecraft from cache
+	var passPlan *dsn.PassPlan
+	var passPlanUpdatedAt time.Time
+	var passPlanError error
+	var passPlanLoading bool
+	if cached, ok := m.passPlanCache[m.focusedSpacecraftID]; ok {
+		passPlan = cached.Plan
+		passPlanUpdatedAt = cached.UpdatedAt
+		passPlanError = cached.Error
+		passPlanLoading = cached.Loading
+	}
+
 	return Snapshot{
-		Data:          m.current,
-		LastFetch:     m.lastFetch,
-		NextRefresh:   m.nextRefresh,
-		LastError:     m.lastError,
-		FetchDuration: m.fetchDuration,
-		ComplexLoads:  loads,
-		Spacecraft:    sc,
-		SkyObjects:    skyObjs,
-		Events:        events,
+		Data:                m.current,
+		LastFetch:           m.lastFetch,
+		NextRefresh:         m.nextRefresh,
+		LastError:           m.lastError,
+		FetchDuration:       m.fetchDuration,
+		ComplexLoads:        loads,
+		Spacecraft:          sc,
+		SkyObjects:          skyObjs,
+		Events:              events,
+		PassPlan:            passPlan,
+		PassPlanUpdatedAt:   passPlanUpdatedAt,
+		PassPlanError:       passPlanError,
+		PassPlanLoading:     passPlanLoading,
+		FocusedSpacecraftID: m.focusedSpacecraftID,
 	}
 }
 
@@ -427,4 +466,105 @@ func (m *Manager) HasData() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.current != nil
+}
+
+// PassPlanTTL is how long a computed pass plan remains valid.
+const PassPlanTTL = 5 * time.Minute
+
+// SetFocusedSpacecraft updates the focused spacecraft for pass planning.
+func (m *Manager) SetFocusedSpacecraft(spacecraftID int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.focusedSpacecraftID = spacecraftID
+}
+
+// GetFocusedSpacecraftID returns the currently focused spacecraft ID.
+func (m *Manager) GetFocusedSpacecraftID() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.focusedSpacecraftID
+}
+
+// SetPassPlanLoading marks a spacecraft's pass plan as loading.
+func (m *Manager) SetPassPlanLoading(spacecraftID int, loading bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cached, ok := m.passPlanCache[spacecraftID]
+	if !ok {
+		cached = &CachedPassPlan{}
+		m.passPlanCache[spacecraftID] = cached
+	}
+	cached.Loading = loading
+}
+
+// UpdatePassPlan sets the cached pass plan for a spacecraft.
+func (m *Manager) UpdatePassPlan(spacecraftID int, plan *dsn.PassPlan, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.passPlanCache[spacecraftID] = &CachedPassPlan{
+		Plan:      plan,
+		UpdatedAt: time.Now(),
+		Error:     err,
+		Loading:   false,
+	}
+}
+
+// GetCachedPassPlan returns the cached pass plan for a spacecraft.
+func (m *Manager) GetCachedPassPlan(spacecraftID int) *CachedPassPlan {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if cached, ok := m.passPlanCache[spacecraftID]; ok {
+		// Return a copy
+		return &CachedPassPlan{
+			Plan:      cached.Plan,
+			UpdatedAt: cached.UpdatedAt,
+			Error:     cached.Error,
+			Loading:   cached.Loading,
+		}
+	}
+	return nil
+}
+
+// NeedsPassPlanRefresh returns true if a spacecraft's pass plan should be recomputed.
+func (m *Manager) NeedsPassPlanRefresh(spacecraftID int) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if spacecraftID == 0 {
+		return false
+	}
+
+	cached, ok := m.passPlanCache[spacecraftID]
+	if !ok {
+		return true // No cache entry
+	}
+
+	if cached.Loading {
+		return false // Already loading
+	}
+
+	if cached.Plan == nil && cached.Error == nil {
+		return true // No plan yet
+	}
+
+	if time.Since(cached.UpdatedAt) > PassPlanTTL {
+		return true // TTL expired
+	}
+
+	return false
+}
+
+// GetAllSpacecraftIDs returns IDs of all known spacecraft.
+func (m *Manager) GetAllSpacecraftIDs() []int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	ids := make([]int, 0, len(m.spacecraft))
+	for _, sc := range m.spacecraft {
+		ids = append(ids, sc.ID)
+	}
+	return ids
 }

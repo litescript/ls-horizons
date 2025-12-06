@@ -8,42 +8,42 @@ import (
 
 func TestSunPosition(t *testing.T) {
 	tests := []struct {
-		name      string
-		time      time.Time
-		wantRAMin float64 // RA in degrees
-		wantRAMax float64
+		name       string
+		time       time.Time
+		wantRAMin  float64 // RA in degrees
+		wantRAMax  float64
 		wantDecMin float64 // Dec in degrees
 		wantDecMax float64
 	}{
 		{
-			name:      "Spring Equinox 2024 - Sun near 0h RA, 0° Dec",
-			time:      time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC),
-			wantRAMin: 359, // Near 0h (can be 359-1)
-			wantRAMax: 2,
+			name:       "Spring Equinox 2024 - Sun near 0h RA, 0° Dec",
+			time:       time.Date(2024, 3, 20, 12, 0, 0, 0, time.UTC),
+			wantRAMin:  359, // Near 0h (can be 359-1)
+			wantRAMax:  2,
 			wantDecMin: -1,
 			wantDecMax: 1,
 		},
 		{
-			name:      "Summer Solstice 2024 - Sun near 6h RA, +23.5° Dec",
-			time:      time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC),
-			wantRAMin: 88, // 6h = 90°
-			wantRAMax: 92,
+			name:       "Summer Solstice 2024 - Sun near 6h RA, +23.5° Dec",
+			time:       time.Date(2024, 6, 21, 12, 0, 0, 0, time.UTC),
+			wantRAMin:  88, // 6h = 90°
+			wantRAMax:  92,
 			wantDecMin: 23,
 			wantDecMax: 24,
 		},
 		{
-			name:      "Autumn Equinox 2024 - Sun near 12h RA, 0° Dec",
-			time:      time.Date(2024, 9, 22, 12, 0, 0, 0, time.UTC),
-			wantRAMin: 178, // 12h = 180°
-			wantRAMax: 182,
+			name:       "Autumn Equinox 2024 - Sun near 12h RA, 0° Dec",
+			time:       time.Date(2024, 9, 22, 12, 0, 0, 0, time.UTC),
+			wantRAMin:  178, // 12h = 180°
+			wantRAMax:  182,
 			wantDecMin: -1,
 			wantDecMax: 1,
 		},
 		{
-			name:      "Winter Solstice 2024 - Sun near 18h RA, -23.5° Dec",
-			time:      time.Date(2024, 12, 21, 12, 0, 0, 0, time.UTC),
-			wantRAMin: 268, // 18h = 270°
-			wantRAMax: 272,
+			name:       "Winter Solstice 2024 - Sun near 18h RA, -23.5° Dec",
+			time:       time.Date(2024, 12, 21, 12, 0, 0, 0, time.UTC),
+			wantRAMin:  268, // 18h = 270°
+			wantRAMax:  272,
 			wantDecMin: -24,
 			wantDecMax: -23,
 		},
@@ -84,44 +84,44 @@ func TestAngularSeparation(t *testing.T) {
 		tol       float64
 	}{
 		{
-			name:    "Same point",
-			ra1:     100, dec1: 30,
-			ra2:     100, dec2: 30,
+			name: "Same point",
+			ra1:  100, dec1: 30,
+			ra2: 100, dec2: 30,
 			wantSep: 0,
 			tol:     0.001,
 		},
 		{
-			name:    "90 degrees apart on equator",
-			ra1:     0, dec1: 0,
-			ra2:     90, dec2: 0,
+			name: "90 degrees apart on equator",
+			ra1:  0, dec1: 0,
+			ra2: 90, dec2: 0,
 			wantSep: 90,
 			tol:     0.001,
 		},
 		{
-			name:    "180 degrees apart on equator",
-			ra1:     0, dec1: 0,
-			ra2:     180, dec2: 0,
+			name: "180 degrees apart on equator",
+			ra1:  0, dec1: 0,
+			ra2: 180, dec2: 0,
 			wantSep: 180,
 			tol:     0.001,
 		},
 		{
-			name:    "Pole to equator",
-			ra1:     0, dec1: 90,   // North pole
-			ra2:     0, dec2: 0,    // On equator
+			name: "Pole to equator",
+			ra1:  0, dec1: 90, // North pole
+			ra2: 0, dec2: 0, // On equator
 			wantSep: 90,
 			tol:     0.001,
 		},
 		{
-			name:    "Pole to pole",
-			ra1:     0, dec1: 90,   // North pole
-			ra2:     0, dec2: -90,  // South pole
+			name: "Pole to pole",
+			ra1:  0, dec1: 90, // North pole
+			ra2: 0, dec2: -90, // South pole
 			wantSep: 180,
 			tol:     0.001,
 		},
 		{
-			name:    "Small separation",
-			ra1:     100, dec1: 30,
-			ra2:     101, dec2: 30,
+			name: "Small separation",
+			ra1:  100, dec1: 30,
+			ra2: 101, dec2: 30,
 			wantSep: 0.866, // cos(30°) ≈ 0.866
 			tol:     0.01,
 		},

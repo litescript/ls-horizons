@@ -236,7 +236,7 @@ func refineMaxElevation(obs Observer, samples []RADecAtTime, approxMax time.Time
 	// At t=0:  y1 = c
 	// At t=1:  y2 = a + b + c
 	c := y1
-	a := (y0 + y2)/2 - c
+	a := (y0+y2)/2 - c
 	b := (y2 - y0) / 2
 
 	// Maximum at t = -b/(2a), but only if parabola opens downward (a < 0)

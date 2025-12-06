@@ -21,13 +21,14 @@ type SolarSystemModel struct {
 	solarSnap dsn.SolarSystemSnapshot
 
 	// View state
-	focusIdx   int   // Index in bodies list (-1 = Sun)
-	zoomLevel  int   // Index into zoomLevels
+	focusIdx   int     // Index in bodies list (-1 = Sun)
+	zoomLevel  int     // Index into zoomLevels
 	panX       float64 // Pan offset in display units
 	panY       float64
 	scaleMode  astro.ScaleMode
 	labelMode  LabelMode // Label display mode (reuses sky_view LabelMode)
 	userPanned bool      // True if user has manually panned (disables auto-center on zoom)
+	showStars  bool      // Whether to show background starfield
 }
 
 // Discrete zoom levels for clean stepping
@@ -40,6 +41,7 @@ func NewSolarSystemModel() SolarSystemModel {
 		zoomLevel: 3,  // Index of 1.0 in zoomLevels
 		scaleMode: astro.ScaleLogR,
 		labelMode: LabelFocused, // Show focused body label by default
+		showStars: true,         // Show starfield by default
 	}
 }
 
@@ -135,6 +137,10 @@ func (m SolarSystemModel) Update(msg tea.Msg) (SolarSystemModel, tea.Cmd) {
 		// Label mode toggle
 		case "l":
 			m.labelMode = (m.labelMode + 1) % 3
+
+		// Starfield toggle
+		case "t":
+			m.showStars = !m.showStars
 
 		// Reset everything
 		case "r":
@@ -291,6 +297,11 @@ func (m SolarSystemModel) buildCanvas() string {
 	originX := screenCenterX + int(m.panX*displayScale)
 	originY := screenCenterY - int(m.panY*displayScale)
 
+	// Draw starfield background (before everything else)
+	if m.showStars {
+		m.drawStarfield(grid, originX, originY, displayScale, cfg)
+	}
+
 	// Draw orbit rings centered on the panned origin
 	m.drawOrbitRings(grid, originX, originY, displayScale, cfg)
 
@@ -389,6 +400,71 @@ func (m SolarSystemModel) drawCircle(grid [][]rune, cx, cy int, r float64) {
 	}
 }
 
+// drawStarfield renders background stars from the bright star catalog.
+// Stars are projected to the same ecliptic top-down view as planets.
+// The shell radius adapts to zoom level so stars remain visible as a
+// stable background at all zoom levels.
+func (m SolarSystemModel) drawStarfield(grid [][]rune, cx, cy int, displayScale float64, cfg astro.ProjectionConfig) {
+	h := len(grid)
+	w := len(grid[0])
+
+	// Get the bright star catalog
+	catalog := astro.DefaultStarCatalog()
+
+	// Adaptive shell radius: scale inversely with zoom so stars stay
+	// at the edge of the viewport regardless of zoom level.
+	// At zoom 1.0x with log scale, 100 AU gives ~2.0 display units.
+	// We want stars to appear at ~viewportR/displayScale in display space.
+	shellRadius := astro.DefaultStarShellRadiusAU / cfg.Scale
+
+	// Set up projection config for stars
+	starCfg := astro.ProjectionConfig{
+		Scale:             cfg.Scale,
+		Mode:              cfg.Mode,
+		StarShellRadiusAU: shellRadius,
+	}
+
+	for _, star := range catalog.Stars {
+		// Project star to ecliptic top-down view
+		proj := astro.ProjectStarEclipticTopDown(star.RAdeg, star.DecDeg, starCfg)
+
+		// Convert to screen coordinates (same as planets)
+		sx := cx + int(proj.X*displayScale)
+		sy := cy - int(proj.Y*displayScale*0.5) // Aspect ratio correction
+
+		// Bounds check
+		if sx < 0 || sx >= w || sy < 0 || sy >= h {
+			continue
+		}
+
+		// Only draw on empty cells (don't overwrite anything)
+		if grid[sy][sx] != ' ' {
+			continue
+		}
+
+		// Select glyph based on magnitude (brighter = lower magnitude)
+		glyph := m.starGlyph(star.Mag)
+		if glyph != ' ' {
+			grid[sy][sx] = glyph
+		}
+	}
+}
+
+// starGlyph returns a subtle glyph based on star magnitude.
+// Brighter stars (lower magnitude) get slightly more prominent glyphs.
+func (m SolarSystemModel) starGlyph(mag float64) rune {
+	switch {
+	case mag <= 1.0:
+		return '∗' // Bright stars: slightly more visible
+	case mag <= 2.5:
+		return '·' // Medium stars: standard dot
+	case mag <= 3.5:
+		return '˙' // Dim stars: small dot
+	default:
+		return ' ' // Very dim: skip to avoid clutter
+	}
+}
+
 // renderLabels draws body labels on the canvas based on label mode.
 func (m SolarSystemModel) renderLabels(grid [][]rune, width, height int, positions []bodyPos) {
 	if m.labelMode == LabelNone || len(positions) == 0 {
@@ -465,6 +541,7 @@ func (m SolarSystemModel) renderGrid(grid [][]rune, cx, cy int, scale float64, c
 	var b strings.Builder
 
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	starStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("236")) // Very dim for stars
 	sunStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
 	planetStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	giantStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
@@ -482,6 +559,8 @@ func (m SolarSystemModel) renderGrid(grid [][]rune, cx, cy int, scale float64, c
 				continue
 			case '·':
 				style = dimStyle
+			case '∗', '˙': // Star glyphs
+				style = starStyle
 			case '☉':
 				style = sunStyle
 			case '•':
@@ -572,6 +651,12 @@ func (m SolarSystemModel) renderHUD() string {
 		labelName = "all"
 	}
 
+	// Stars indicator
+	starsName := "off"
+	if m.showStars {
+		starsName = "on"
+	}
+
 	// Use consistent label/value styling
 	b.WriteString(dimStyle.Render("Mode:"))
 	b.WriteString(valueStyle.Render(modeName))
@@ -581,6 +666,9 @@ func (m SolarSystemModel) renderHUD() string {
 	b.WriteString("  ")
 	b.WriteString(dimStyle.Render("Labels:"))
 	b.WriteString(valueStyle.Render(labelName))
+	b.WriteString("  ")
+	b.WriteString(dimStyle.Render("Stars:"))
+	b.WriteString(valueStyle.Render(starsName))
 
 	return b.String()
 }
@@ -591,6 +679,11 @@ func (m SolarSystemModel) FocusedBody() *dsn.EclipticBody {
 		return &m.solarSnap.Bodies[m.focusIdx]
 	}
 	return nil
+}
+
+// ShowStars returns whether the starfield is visible.
+func (m SolarSystemModel) ShowStars() bool {
+	return m.showStars
 }
 
 // SetFocusByCode sets focus to a body by its code.

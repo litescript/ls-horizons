@@ -20,8 +20,8 @@ const (
 
 // Common DSN carrier frequencies in MHz
 const (
-	FreqSBand = 2295.0  // S-band downlink (~2.3 GHz)
-	FreqXBand = 8420.0  // X-band downlink (~8.4 GHz)
+	FreqSBand  = 2295.0  // S-band downlink (~2.3 GHz)
+	FreqXBand  = 8420.0  // X-band downlink (~8.4 GHz)
 	FreqKaBand = 32000.0 // Ka-band downlink (~32 GHz)
 )
 

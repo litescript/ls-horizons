@@ -47,12 +47,28 @@ type (
 	updateCheckMsg struct {
 		info version.UpdateInfo
 	}
+
+	// passPlanUpdatedMsg signals pass plan computation completed.
+	passPlanUpdatedMsg struct {
+		spacecraftID int
+		plan         *dsn.PassPlan
+		err          error
+	}
+
+	// passPlanQueueTickMsg triggers processing the next queued pass plan request.
+	passPlanQueueTickMsg struct{}
+
+	// DashboardOpenMissionMsg requests opening Mission view for a spacecraft.
+	DashboardOpenMissionMsg struct {
+		SpacecraftID int
+	}
 )
 
 // Model is the root Bubble Tea model.
 type Model struct {
 	// Dependencies
-	state *state.Manager
+	state         *state.Manager
+	ephemProvider ephem.Provider
 
 	// UI state
 	viewMode  ViewMode
@@ -69,8 +85,12 @@ type Model struct {
 	solarSystem   SolarSystemModel
 
 	// Data snapshot (updated on DataUpdateMsg)
-	snapshot    state.Snapshot
-	solarCache  *dsn.SolarSystemCache
+	snapshot   state.Snapshot
+	solarCache *dsn.SolarSystemCache
+
+	// Pass plan request queue (to avoid rate limiting)
+	passPlanQueue    []int // Spacecraft IDs waiting for pass plan fetch
+	passPlanFetching bool  // True if a fetch is in progress
 }
 
 // New creates a new root UI model.
@@ -90,6 +110,7 @@ func New(stateMgr *state.Manager, ephemProvider ephem.Provider) Model {
 
 	return Model{
 		state:         stateMgr,
+		ephemProvider: ephemProvider,
 		viewMode:      ViewDashboard,
 		dashboard:     NewDashboardModel(),
 		missionDetail: NewMissionDetailModel(),
@@ -175,6 +196,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AnimTickMsg:
 		cmds = append(cmds, animTickCmd())
 		m.animTick++
+		// Update animation tick for sub-models that need it
+		m.missionDetail = m.missionDetail.SetAnimTick(m.animTick)
 
 	case DataUpdateMsg:
 		m.snapshot = msg.Snapshot
@@ -194,6 +217,79 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			solarSnap := m.solarCache.GetSnapshot()
 			m.solarSystem = m.solarSystem.UpdateData(m.snapshot, solarSnap)
+		}
+
+		// Sync focused spacecraft from mission detail to state for pass planning
+		selectedID := m.missionDetail.SelectedSpacecraftID()
+		if selectedID > 0 {
+			m.state.SetFocusedSpacecraft(selectedID)
+		}
+
+		// Trigger background refresh for all spacecraft that need it
+		cmds = append(cmds, m.refreshAllPassPlans()...)
+
+	case passPlanUpdatedMsg:
+		m.state.UpdatePassPlan(msg.spacecraftID, msg.plan, msg.err)
+		m.passPlanFetching = false
+		// Request fresh snapshot to get the updated pass plan
+		m.snapshot = m.state.Snapshot()
+		// Push to mission detail immediately so data shows without waiting for tick
+		m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
+		// Process next in queue after a delay
+		cmds = append(cmds, m.scheduleNextPassPlanFetch())
+
+	case passPlanQueueTickMsg:
+		// Process next queued pass plan request
+		if cmd := m.processPassPlanQueue(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+
+	case SpacecraftChangedMsg:
+		// Forward from mission detail - immediately update focused spacecraft
+		if msg.SpacecraftID > 0 {
+			m.state.SetFocusedSpacecraft(msg.SpacecraftID)
+			// Get fresh snapshot with cached data for this spacecraft
+			m.snapshot = m.state.Snapshot()
+			// Push updated snapshot to mission detail immediately
+			m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
+			// Prioritize this spacecraft in queue if it needs refresh
+			if m.state.NeedsPassPlanRefresh(msg.SpacecraftID) {
+				m.prioritizeInQueue(msg.SpacecraftID)
+				// If not currently fetching, start immediately
+				if !m.passPlanFetching {
+					if cmd := m.processPassPlanQueue(); cmd != nil {
+						cmds = append(cmds, cmd)
+						// Re-sync snapshot after loading state is set
+						m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
+					}
+				}
+			}
+		}
+
+	case DashboardOpenMissionMsg:
+		// Open Mission view for selected spacecraft from Dashboard
+		if msg.SpacecraftID > 0 {
+			// Set focused spacecraft in state
+			m.state.SetFocusedSpacecraft(msg.SpacecraftID)
+			// Set selected spacecraft in Mission view
+			m.missionDetail.SetSelectedSpacecraft(msg.SpacecraftID)
+			// Switch to Mission view
+			m.viewMode = ViewMissionDetail
+			// Get fresh snapshot with cached data
+			m.snapshot = m.state.Snapshot()
+			// Push to mission detail immediately
+			m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
+			// Trigger pass plan refresh if needed
+			if m.state.NeedsPassPlanRefresh(msg.SpacecraftID) {
+				m.prioritizeInQueue(msg.SpacecraftID)
+				if !m.passPlanFetching {
+					if cmd := m.processPassPlanQueue(); cmd != nil {
+						cmds = append(cmds, cmd)
+						// Re-sync snapshot after loading state is set
+						m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
+					}
+				}
+			}
 		}
 
 	case ErrorMsg:
@@ -415,7 +511,7 @@ func (m Model) renderFooter() string {
 	case ViewSky:
 		help = dimStyle.Render("j/k: focus | l: labels | c: complex | p: path | v: visibility")
 	case ViewSolarSystem:
-		help = dimStyle.Render("j/k: focus | n/N: spacecraft | +/-: zoom | arrows: pan | f: find | l: labels | z: mode")
+		help = dimStyle.Render("j/k: focus | n/N: spacecraft | +/-: zoom | arrows: pan | f: find | l: labels | z: mode | t: stars")
 	default:
 		help = dimStyle.Render("↑↓: navigate | tab: switch view")
 	}
@@ -524,4 +620,162 @@ func countActiveLinks(data *dsn.DSNData) int {
 		return 0
 	}
 	return len(data.Links)
+}
+
+// refreshAllPassPlans queues pass plan requests for all spacecraft that need it.
+// Requests are processed one at a time with delays to avoid rate-limiting.
+func (m *Model) refreshAllPassPlans() []tea.Cmd {
+	// Queue all spacecraft that need refresh
+	focusedID := m.missionDetail.SelectedSpacecraftID()
+
+	for _, sc := range m.snapshot.Spacecraft {
+		if isStationNotSpacecraft(sc.Name) {
+			continue
+		}
+		if m.state.NeedsPassPlanRefresh(sc.ID) {
+			// Add to queue if not already there
+			if !m.isInQueue(sc.ID) {
+				m.passPlanQueue = append(m.passPlanQueue, sc.ID)
+			}
+		}
+	}
+
+	// Prioritize focused spacecraft
+	if focusedID > 0 {
+		m.prioritizeInQueue(focusedID)
+	}
+
+	// Start processing if not already fetching
+	if !m.passPlanFetching && len(m.passPlanQueue) > 0 {
+		return []tea.Cmd{m.processPassPlanQueue()}
+	}
+	return nil
+}
+
+// isInQueue checks if a spacecraft ID is already in the queue.
+func (m *Model) isInQueue(id int) bool {
+	for _, qid := range m.passPlanQueue {
+		if qid == id {
+			return true
+		}
+	}
+	return false
+}
+
+// prioritizeInQueue moves a spacecraft ID to the front of the queue.
+func (m *Model) prioritizeInQueue(id int) {
+	// Remove from current position if present
+	for i, qid := range m.passPlanQueue {
+		if qid == id {
+			m.passPlanQueue = append(m.passPlanQueue[:i], m.passPlanQueue[i+1:]...)
+			break
+		}
+	}
+	// Add to front
+	m.passPlanQueue = append([]int{id}, m.passPlanQueue...)
+}
+
+// processPassPlanQueue processes the next item in the pass plan queue.
+func (m *Model) processPassPlanQueue() tea.Cmd {
+	if len(m.passPlanQueue) == 0 || m.passPlanFetching {
+		return nil
+	}
+
+	// Pop first item
+	spacecraftID := m.passPlanQueue[0]
+	m.passPlanQueue = m.passPlanQueue[1:]
+
+	// Skip if no longer needs refresh (might have been fetched already)
+	if !m.state.NeedsPassPlanRefresh(spacecraftID) {
+		// Try next in queue
+		return m.processPassPlanQueue()
+	}
+
+	m.passPlanFetching = true
+	return m.refreshPassPlanFor(spacecraftID)
+}
+
+// scheduleNextPassPlanFetch schedules the next queue item after a delay.
+func (m *Model) scheduleNextPassPlanFetch() tea.Cmd {
+	if len(m.passPlanQueue) == 0 {
+		return nil
+	}
+	// Wait 1.5 seconds between requests to avoid rate limiting
+	return tea.Tick(1500*time.Millisecond, func(t time.Time) tea.Msg {
+		return passPlanQueueTickMsg{}
+	})
+}
+
+// refreshPassPlanFor starts async pass plan computation for a specific spacecraft.
+func (m *Model) refreshPassPlanFor(spacecraftID int) tea.Cmd {
+	// Find spacecraft name
+	var scName string
+	for _, sc := range m.snapshot.Spacecraft {
+		if sc.ID == spacecraftID {
+			scName = sc.Name
+			break
+		}
+	}
+
+	if scName == "" {
+		return nil
+	}
+
+	// Mark as loading and refresh snapshot so UI shows loading state
+	m.state.SetPassPlanLoading(spacecraftID, true)
+	m.snapshot = m.state.Snapshot()
+
+	// Look up NAIF ID
+	naifID := ephem.GetNAIFIDByName(scName)
+	if naifID == 0 {
+		// Unknown spacecraft, can't compute pass plan
+		return func() tea.Msg {
+			return passPlanUpdatedMsg{
+				spacecraftID: spacecraftID,
+				plan:         nil,
+				err:          fmt.Errorf("unknown spacecraft: %s", scName),
+			}
+		}
+	}
+
+	// Get spacecraft code for pass plan
+	targetInfo, ok := ephem.GetTargetByName(scName)
+	if !ok {
+		return func() tea.Msg {
+			return passPlanUpdatedMsg{
+				spacecraftID: spacecraftID,
+				plan:         nil,
+				err:          fmt.Errorf("unknown spacecraft: %s", scName),
+			}
+		}
+	}
+	scCode := targetInfo.Code
+
+	// Get Horizons provider for RA/Dec query
+	hp, ok := m.ephemProvider.(*ephem.HorizonsProvider)
+	if !ok {
+		return func() tea.Msg {
+			return passPlanUpdatedMsg{
+				spacecraftID: spacecraftID,
+				plan:         nil,
+				err:          fmt.Errorf("ephemeris provider does not support RA/Dec queries"),
+			}
+		}
+	}
+
+	// Compute pass plan async
+	return func() tea.Msg {
+		now := time.Now()
+		start := now
+		end := now.Add(24 * time.Hour)
+		step := 5 * time.Minute
+
+		samples, err := hp.GetRADecPath(naifID, start, end, step)
+		if err != nil {
+			return passPlanUpdatedMsg{spacecraftID: spacecraftID, plan: nil, err: err}
+		}
+
+		plan := dsn.ComputePassPlan(scCode, samples, now)
+		return passPlanUpdatedMsg{spacecraftID: spacecraftID, plan: plan, err: nil}
+	}
 }

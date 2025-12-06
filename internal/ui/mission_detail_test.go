@@ -13,21 +13,21 @@ import (
 func TestMissionDetailPassPanelToggle(t *testing.T) {
 	m := NewMissionDetailModel()
 
-	// Initially pass panel should be hidden
-	if m.ShowPassPanel() {
-		t.Error("pass panel should be hidden initially")
+	// Initially pass panel should be visible (default ON per spec)
+	if !m.ShowPassPanel() {
+		t.Error("pass panel should be visible initially (default ON)")
 	}
 
-	// Press 'h' to toggle on
+	// Press 'h' to toggle off
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	if m.ShowPassPanel() {
+		t.Error("pass panel should be hidden after pressing 'h'")
+	}
+
+	// Press 'h' again to toggle back on
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
 	if !m.ShowPassPanel() {
-		t.Error("pass panel should be visible after pressing 'h'")
-	}
-
-	// Press 'h' again to toggle off
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
-	if m.ShowPassPanel() {
-		t.Error("pass panel should be hidden after pressing 'h' again")
+		t.Error("pass panel should be visible after pressing 'h' again")
 	}
 }
 
@@ -76,8 +76,8 @@ func TestMissionDetailSpacecraftNavigation(t *testing.T) {
 
 func TestMissionDetailRenderNoPanic(t *testing.T) {
 	tests := []struct {
-		name     string
-		setup    func() MissionDetailModel
+		name  string
+		setup func() MissionDetailModel
 	}{
 		{
 			name: "empty model",
@@ -108,8 +108,7 @@ func TestMissionDetailRenderNoPanic(t *testing.T) {
 						{ID: 1, Name: "Test", Distance: 1000000},
 					},
 				})
-				// Toggle pass panel on
-				m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+				// Pass panel is visible by default (default ON per spec)
 				return m
 			},
 		},
@@ -128,7 +127,7 @@ func TestMissionDetailRenderNoPanic(t *testing.T) {
 					GeneratedAt:    time.Now(),
 					Passes:         nil,
 				})
-				m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+				// Pass panel is visible by default (default ON per spec)
 				return m
 			},
 		},
@@ -178,7 +177,7 @@ func TestMissionDetailRenderNoPanic(t *testing.T) {
 						},
 					},
 				})
-				m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+				// Pass panel is visible by default (default ON per spec)
 				return m
 			},
 		},
@@ -216,8 +215,8 @@ func TestMissionDetailUpdatePassPlan(t *testing.T) {
 
 	m = m.UpdatePassPlan(plan)
 
-	// Toggle panel on and render to verify pass data is used
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}})
+	// Pass panel is visible by default (default ON per spec)
+	// Render to verify pass data is used
 	output := m.View()
 
 	// Output should contain some indication of the pass

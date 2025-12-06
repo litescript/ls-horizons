@@ -66,8 +66,9 @@ const (
 
 // ProjectionConfig configures the top-down ecliptic projection.
 type ProjectionConfig struct {
-	Scale float64   // Base scale factor
-	Mode  ScaleMode // Scaling mode
+	Scale             float64   // Base scale factor
+	Mode              ScaleMode // Scaling mode
+	StarShellRadiusAU float64   // Radius for star projection (default 100 AU)
 }
 
 // DefaultProjectionConfig returns a reasonable default configuration.
@@ -187,6 +188,47 @@ func EclipticToEquatorial(ecl Vec3) Vec3 {
 		Y: ecl.Y*cosE - ecl.Z*sinE,
 		Z: ecl.Y*sinE + ecl.Z*cosE,
 	}
+}
+
+// DefaultStarShellRadiusAU is the default radius for projecting stars.
+const DefaultStarShellRadiusAU = 100.0
+
+// ProjectStarEclipticTopDown projects a star (given in equatorial RA/Dec)
+// into the top-down ecliptic plane at a fixed "celestial shell" radius.
+// Stars are treated as infinitely distant, projected onto a shell around the Sun.
+//
+// Parameters:
+//   - raDeg: Right Ascension in degrees (J2000)
+//   - decDeg: Declination in degrees (J2000)
+//   - cfg: ProjectionConfig (uses StarShellRadiusAU, defaults to 100 AU if 0)
+//
+// Returns a ProjectedPoint with X/Y in the same coordinate space as planets.
+func ProjectStarEclipticTopDown(raDeg, decDeg float64, cfg ProjectionConfig) ProjectedPoint {
+	// Convert RA/Dec to unit vector in equatorial frame
+	raRad := degToRad(raDeg)
+	decRad := degToRad(decDeg)
+
+	// Equatorial unit vector: X toward RA=0, Y toward RA=90°, Z toward Dec=+90°
+	eq := Vec3{
+		X: math.Cos(decRad) * math.Cos(raRad),
+		Y: math.Cos(decRad) * math.Sin(raRad),
+		Z: math.Sin(decRad),
+	}
+
+	// Convert equatorial to ecliptic
+	ecl := EquatorialToEcliptic(eq)
+
+	// Get shell radius (default to 100 AU if not specified)
+	shellR := cfg.StarShellRadiusAU
+	if shellR <= 0 {
+		shellR = DefaultStarShellRadiusAU
+	}
+
+	// Scale to shell radius
+	eclScaled := ecl.Scale(shellR)
+
+	// Project using existing top-down projection
+	return ProjectEclipticTopDown(eclScaled, cfg)
 }
 
 // LightTimeFromAU returns the one-way light time for a distance in AU.

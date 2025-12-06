@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -266,4 +267,99 @@ func containsRune(s string, r rune) bool {
 		}
 	}
 	return false
+}
+
+func TestSolarSystemModelStarfieldToggle(t *testing.T) {
+	m := NewSolarSystemModel()
+
+	// Starfield should be on by default
+	if !m.ShowStars() {
+		t.Error("expected showStars true by default")
+	}
+
+	// Toggle off with 't' key
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if m.ShowStars() {
+		t.Error("expected showStars false after first toggle")
+	}
+
+	// Toggle back on
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	if !m.ShowStars() {
+		t.Error("expected showStars true after second toggle")
+	}
+}
+
+func TestSolarSystemModelStarfieldRenderNoPanic(t *testing.T) {
+	m := NewSolarSystemModel()
+	m = m.SetSize(80, 24)
+
+	// With stars on
+	m.showStars = true
+	solarSnap := dsn.SolarSystemSnapshot{
+		Bodies: []dsn.EclipticBody{
+			{Name: "Sun", Code: "SUN", Kind: dsn.BodySun, Pos: astro.Vec3{}},
+			{Name: "Earth", Code: "EARTH", Kind: dsn.BodyPlanet, Class: dsn.ClassInner, Pos: astro.Vec3{X: 1}},
+		},
+	}
+	m = m.UpdateData(state.Snapshot{}, solarSnap)
+
+	// Should not panic
+	view := m.View()
+	if len(view) == 0 {
+		t.Error("expected non-empty view with stars on")
+	}
+
+	// Toggle stars off
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+
+	// Should also not panic with stars off
+	view = m.View()
+	if len(view) == 0 {
+		t.Error("expected non-empty view with stars off")
+	}
+}
+
+func TestSolarSystemModelStarfieldHUD(t *testing.T) {
+	m := NewSolarSystemModel()
+	m = m.SetSize(120, 30)
+
+	solarSnap := dsn.SolarSystemSnapshot{
+		Bodies: []dsn.EclipticBody{
+			{Name: "Sun", Code: "SUN", Kind: dsn.BodySun, Pos: astro.Vec3{}},
+		},
+	}
+	m = m.UpdateData(state.Snapshot{}, solarSnap)
+
+	// With stars on, HUD should show "Stars:on"
+	view := m.View()
+	if !strings.Contains(view, "Stars:") {
+		t.Error("HUD should contain 'Stars:' indicator")
+	}
+}
+
+func TestSolarSystemModelStarGlyph(t *testing.T) {
+	m := NewSolarSystemModel()
+
+	tests := []struct {
+		mag       float64
+		wantGlyph rune
+	}{
+		{-1.0, '∗'}, // Very bright (Sirius)
+		{0.5, '∗'},  // Bright
+		{1.0, '∗'},  // Threshold
+		{1.5, '·'},  // Medium
+		{2.5, '·'},  // Medium threshold
+		{3.0, '˙'},  // Dim
+		{3.5, '˙'},  // Dim threshold
+		{4.0, ' '},  // Too dim
+		{5.0, ' '},  // Very dim
+	}
+
+	for _, tt := range tests {
+		got := m.starGlyph(tt.mag)
+		if got != tt.wantGlyph {
+			t.Errorf("starGlyph(%.1f) = %q, want %q", tt.mag, string(got), string(tt.wantGlyph))
+		}
+	}
 }

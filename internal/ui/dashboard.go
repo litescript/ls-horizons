@@ -119,6 +119,13 @@ func (m DashboardModel) Update(msg tea.Msg) (DashboardModel, tea.Cmd) {
 			if scCount > 0 {
 				m.cursor = scCount - 1
 			}
+		case "enter":
+			// Open Mission view for selected spacecraft
+			if sc := m.GetSelectedSpacecraft(); sc != nil {
+				return m, func() tea.Msg {
+					return DashboardOpenMissionMsg{SpacecraftID: sc.ID}
+				}
+			}
 		}
 	}
 

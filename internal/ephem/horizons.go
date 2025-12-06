@@ -147,14 +147,13 @@ func (p *HorizonsProvider) queryHorizons(target TargetID, start, end time.Time, 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return EphemerisPath{}, fmt.Errorf("horizons returned status %d: %s", resp.StatusCode, string(body))
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return EphemerisPath{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return EphemerisPath{}, fmt.Errorf("Horizons returned status %d (service may be unavailable)", resp.StatusCode)
 	}
 
 	return parseHorizonsResponse(target, body, obs)
@@ -171,9 +170,17 @@ type horizonsResponse struct {
 
 // parseHorizonsResponse parses the Horizons JSON response.
 func parseHorizonsResponse(target TargetID, body []byte, obs astro.Observer) (EphemerisPath, error) {
+	// Check for HTML error page (Horizons returns HTML on some errors)
+	bodyStr := string(body)
+	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<!DOCTYPE") ||
+		strings.HasPrefix(strings.TrimSpace(bodyStr), "<html") ||
+		strings.HasPrefix(strings.TrimSpace(bodyStr), "<HTML") {
+		return EphemerisPath{}, fmt.Errorf("Horizons API returned HTML error page (service may be unavailable)")
+	}
+
 	var resp horizonsResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return EphemerisPath{}, fmt.Errorf("failed to parse JSON: %w", err)
+		return EphemerisPath{}, fmt.Errorf("failed to parse Horizons response as JSON")
 	}
 
 	// The actual ephemeris data is in resp.Result as a text blob
@@ -318,6 +325,182 @@ func observerMatch(a, b astro.Observer) bool {
 	return true
 }
 
+// RADecCacheTTL is how long to cache RA/Dec path data.
+const RADecCacheTTL = 5 * time.Minute
+
+// cachedRADec stores cached RA/Dec samples.
+type cachedRADec struct {
+	samples   []astro.RADecAtTime
+	fetchedAt time.Time
+}
+
+// raDecCache stores RA/Dec paths by target ID.
+var raDecCache = struct {
+	sync.RWMutex
+	data map[TargetID]*cachedRADec
+}{data: make(map[TargetID]*cachedRADec)}
+
+// GetRADecPath returns RA/Dec samples for a target over a time range.
+// This is used for pass planning where we need geocentric RA/Dec, not observer-centric Az/El.
+func (p *HorizonsProvider) GetRADecPath(target TargetID, start, end time.Time, step time.Duration) ([]astro.RADecAtTime, error) {
+	// Check cache
+	raDecCache.RLock()
+	cached, ok := raDecCache.data[target]
+	raDecCache.RUnlock()
+
+	if ok && time.Since(cached.fetchedAt) < RADecCacheTTL {
+		return cached.samples, nil
+	}
+
+	// Query fresh data
+	samples, err := p.queryRADec(target, start, end, step)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache result
+	raDecCache.Lock()
+	raDecCache.data[target] = &cachedRADec{
+		samples:   samples,
+		fetchedAt: time.Now(),
+	}
+	raDecCache.Unlock()
+
+	return samples, nil
+}
+
+// queryRADec queries Horizons for RA/Dec over a time range.
+func (p *HorizonsProvider) queryRADec(target TargetID, start, end time.Time, step time.Duration) ([]astro.RADecAtTime, error) {
+	// Build request parameters for geocentric RA/Dec
+	params := url.Values{}
+	params.Set("format", "json")
+	params.Set("COMMAND", fmt.Sprintf("'%d'", target))
+	params.Set("OBJ_DATA", "NO")
+	params.Set("MAKE_EPHEM", "YES")
+	params.Set("EPHEM_TYPE", "OBSERVER")
+	params.Set("CENTER", "'500@399'") // Geocentric (Earth center)
+	params.Set("START_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(start)))
+	params.Set("STOP_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(end)))
+	params.Set("STEP_SIZE", fmt.Sprintf("'%s'", formatStepSize(step)))
+	params.Set("QUANTITIES", "'1'") // 1 = Astrometric RA/Dec
+
+	reqURL := HorizonsAPIURL + "?" + params.Encode()
+
+	resp, err := p.client.Get(reqURL)
+	if err != nil {
+		return nil, fmt.Errorf("horizons RA/Dec request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Horizons returned status %d (service may be unavailable)", resp.StatusCode)
+	}
+
+	return parseRADecResponse(body)
+}
+
+// parseRADecResponse parses the Horizons JSON response for RA/Dec data.
+func parseRADecResponse(body []byte) ([]astro.RADecAtTime, error) {
+	// Check for HTML error page (Horizons returns HTML on some errors)
+	bodyStr := string(body)
+	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<!DOCTYPE") ||
+		strings.HasPrefix(strings.TrimSpace(bodyStr), "<html") ||
+		strings.HasPrefix(strings.TrimSpace(bodyStr), "<HTML") {
+		return nil, fmt.Errorf("Horizons API returned HTML error page (service may be unavailable)")
+	}
+
+	var resp horizonsResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		// Don't include the body in error to avoid dumping HTML/garbage
+		return nil, fmt.Errorf("failed to parse Horizons response as JSON")
+	}
+
+	// Find the data section between $$SOE and $$EOE markers
+	soeIdx := strings.Index(resp.Result, "$$SOE")
+	eoeIdx := strings.Index(resp.Result, "$$EOE")
+	if soeIdx == -1 || eoeIdx == -1 || soeIdx >= eoeIdx {
+		return nil, fmt.Errorf("could not find RA/Dec data markers")
+	}
+
+	dataSection := resp.Result[soeIdx+5 : eoeIdx]
+	lines := strings.Split(dataSection, "\n")
+
+	var samples []astro.RADecAtTime
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		sample, err := parseRADecLine(line)
+		if err != nil {
+			continue // Skip unparseable lines
+		}
+		samples = append(samples, sample)
+	}
+
+	return samples, nil
+}
+
+// parseRADecLine parses a single RA/Dec data line.
+// Format for QUANTITIES='1' (Astrometric RA/Dec):
+// 2025-Dec-05 00:00 *   261.032124  32.878027
+// Fields: date, time, flags, RA (deg), Dec (deg)
+func parseRADecLine(line string) (astro.RADecAtTime, error) {
+	fields := strings.Fields(line)
+	if len(fields) < 4 {
+		return astro.RADecAtTime{}, fmt.Errorf("insufficient fields: %d", len(fields))
+	}
+
+	// Parse date/time (first two fields)
+	dateStr := fields[0] + " " + fields[1]
+	t, err := parseHorizonsDateTime(dateStr)
+	if err != nil {
+		return astro.RADecAtTime{}, err
+	}
+
+	// Find RA/Dec values - they're the last two numeric fields
+	// Skip any flag fields (like *, *m, Cm, Nm, Am, etc.)
+	var ra, dec float64
+	numericCount := 0
+
+	for i := 2; i < len(fields); i++ {
+		val, err := strconv.ParseFloat(fields[i], 64)
+		if err == nil {
+			numericCount++
+			if numericCount == 1 {
+				ra = val
+			} else if numericCount == 2 {
+				dec = val
+				break
+			}
+		}
+	}
+
+	if numericCount < 2 {
+		return astro.RADecAtTime{}, fmt.Errorf("could not find RA/Dec values")
+	}
+
+	return astro.RADecAtTime{
+		Time:   t,
+		RAdeg:  ra,
+		DecDeg: dec,
+	}, nil
+}
+
+// InvalidateRADecCache clears the RA/Dec cache for a target.
+func (p *HorizonsProvider) InvalidateRADecCache(target TargetID) {
+	raDecCache.Lock()
+	delete(raDecCache.data, target)
+	raDecCache.Unlock()
+}
+
 func abs(x float64) float64 {
 	if x < 0 {
 		return -x
@@ -381,9 +564,9 @@ func (p *HorizonsProvider) queryHeliocentricVectors(naifID int, t time.Time) (as
 	params.Set("CENTER", "'@10'")       // Sun center
 	params.Set("REF_PLANE", "ECLIPTIC") // Ecliptic plane
 	params.Set("REF_SYSTEM", "ICRF")
-	params.Set("VEC_TABLE", "'2'")     // Position only (no velocity)
+	params.Set("VEC_TABLE", "'2'") // Position only (no velocity)
 	params.Set("VEC_LABELS", "NO")
-	params.Set("OUT_UNITS", "'AU-D'")  // AU and days
+	params.Set("OUT_UNITS", "'AU-D'") // AU and days
 	params.Set("START_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(t)))
 	params.Set("STOP_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(t.Add(time.Minute))))
 	params.Set("STEP_SIZE", "'1 m'")
@@ -396,14 +579,13 @@ func (p *HorizonsProvider) queryHeliocentricVectors(naifID int, t time.Time) (as
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return astro.Vec3{}, fmt.Errorf("horizons returned status %d: %s", resp.StatusCode, string(body))
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return astro.Vec3{}, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return astro.Vec3{}, fmt.Errorf("Horizons returned status %d (service may be unavailable)", resp.StatusCode)
 	}
 
 	return parseVectorResponse(body)
@@ -411,9 +593,17 @@ func (p *HorizonsProvider) queryHeliocentricVectors(naifID int, t time.Time) (as
 
 // parseVectorResponse parses the Horizons JSON response for vector data.
 func parseVectorResponse(body []byte) (astro.Vec3, error) {
+	// Check for HTML error page (Horizons returns HTML on some errors)
+	bodyStr := string(body)
+	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<!DOCTYPE") ||
+		strings.HasPrefix(strings.TrimSpace(bodyStr), "<html") ||
+		strings.HasPrefix(strings.TrimSpace(bodyStr), "<HTML") {
+		return astro.Vec3{}, fmt.Errorf("Horizons API returned HTML error page (service may be unavailable)")
+	}
+
 	var resp horizonsResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return astro.Vec3{}, fmt.Errorf("failed to parse JSON: %w", err)
+		return astro.Vec3{}, fmt.Errorf("failed to parse Horizons response as JSON")
 	}
 
 	// Find the data section between $$SOE and $$EOE markers

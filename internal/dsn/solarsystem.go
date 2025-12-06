@@ -41,12 +41,12 @@ const (
 
 // EclipticBody represents a body in heliocentric ecliptic coordinates.
 type EclipticBody struct {
-	Name   string              // Display name (e.g., "Earth", "VGR1")
-	Code   string              // Short code (e.g., "EARTH", "VGR1")
-	Kind   BodyKind            // Sun, Planet, or Spacecraft
-	Class  PlanetClass         // For planets: inner or giant
-	Pos    astro.Vec3          // Position in AU (heliocentric ecliptic)
-	Meta   map[string]string   // Additional metadata
+	Name  string            // Display name (e.g., "Earth", "VGR1")
+	Code  string            // Short code (e.g., "EARTH", "VGR1")
+	Kind  BodyKind          // Sun, Planet, or Spacecraft
+	Class PlanetClass       // For planets: inner or giant
+	Pos   astro.Vec3        // Position in AU (heliocentric ecliptic)
+	Meta  map[string]string // Additional metadata
 }
 
 // DistanceAU returns the heliocentric distance in AU.
@@ -109,10 +109,10 @@ func (s SolarSystemSnapshot) GetSpacecraft() []EclipticBody {
 
 // Planet definitions with NAIF IDs for Horizons queries.
 type PlanetDef struct {
-	Name   string
-	Code   string
-	NAIFID int
-	Class  PlanetClass
+	Name        string
+	Code        string
+	NAIFID      int
+	Class       PlanetClass
 	SemiMajorAU float64 // Approximate for static fallback
 }
 
@@ -133,7 +133,7 @@ type SolarSystemCache struct {
 	mu sync.RWMutex
 
 	// Cached snapshot
-	snapshot     SolarSystemSnapshot
+	snapshot         SolarSystemSnapshot
 	lastPlanetUpdate time.Time
 	lastSCUpdate     time.Time
 

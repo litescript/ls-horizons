@@ -183,7 +183,7 @@ func TestObserverToECEF(t *testing.T) {
 func TestObserverVelocityECEF(t *testing.T) {
 	// Test that observer velocity magnitude is correct for Earth rotation
 	obs := astro.Observer{
-		LatDeg: 0,  // Equator - maximum rotational velocity
+		LatDeg: 0, // Equator - maximum rotational velocity
 		LonDeg: 0,
 		Name:   "Equator",
 	}
