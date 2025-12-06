@@ -301,7 +301,7 @@ func (m Model) renderFooter() string {
 	var help string
 	switch m.viewMode {
 	case ViewSky:
-		help = dimStyle.Render("j/k: focus | l: labels | c: complex | p: path")
+		help = dimStyle.Render("j/k: focus | l: labels | c: complex | p: path | v: visibility")
 	default:
 		help = dimStyle.Render("↑↓: navigate | tab: switch view")
 	}

@@ -123,6 +123,10 @@ type SkyViewModel struct {
 	pathLastFetch    time.Time
 	pathFetchPending bool
 
+	// Visibility display mode and cache
+	visibilityMode  VisibilityMode
+	visibilityCache *dsn.VisibilityCache
+
 	// Star catalog (loaded once)
 	starCatalog astro.StarCatalog
 }
@@ -130,11 +134,13 @@ type SkyViewModel struct {
 // NewSkyViewModel creates a new sky view model.
 func NewSkyViewModel() SkyViewModel {
 	return SkyViewModel{
-		camAz:       180,
-		camEl:       45,
-		labelMode:   LabelFocused, // default to showing focused spacecraft label
-		pathMode:    PathOff,      // paths off by default until provider is set
-		starCatalog: astro.DefaultStarCatalog(),
+		camAz:           180,
+		camEl:           45,
+		labelMode:       LabelFocused, // default to showing focused spacecraft label
+		pathMode:        PathOff,      // paths off by default until provider is set
+		visibilityMode:  VisibilityOff,
+		visibilityCache: dsn.NewVisibilityCache(),
+		starCatalog:     astro.DefaultStarCatalog(),
 	}
 }
 
@@ -234,6 +240,9 @@ func (m SkyViewModel) Update(msg tea.Msg) (SkyViewModel, tea.Cmd) {
 		case "p":
 			// Toggle path mode
 			return m.togglePathMode()
+		case "v":
+			// Toggle visibility mode
+			return m.toggleVisibilityMode()
 		}
 
 	case animTickMsg:
@@ -247,6 +256,9 @@ func (m SkyViewModel) Update(msg tea.Msg) (SkyViewModel, tea.Cmd) {
 			m.currentPath = msg.path
 			m.pathLastFetch = time.Now()
 		}
+
+	case visibilityUpdateMsg:
+		// Visibility cache updated, no action needed - cache is shared
 	}
 
 	return m, nil
@@ -272,6 +284,43 @@ func (m SkyViewModel) togglePathMode() (SkyViewModel, tea.Cmd) {
 	m.pathMode = PathOff
 	m.currentPath = ephem.EphemerisPath{}
 	return m, nil
+}
+
+func (m SkyViewModel) toggleVisibilityMode() (SkyViewModel, tea.Cmd) {
+	if m.visibilityMode == VisibilityOff {
+		m.visibilityMode = VisibilityOn
+		// Trigger visibility update for focused spacecraft
+		return m.updateVisibilityForFocus()
+	}
+
+	m.visibilityMode = VisibilityOff
+	return m, nil
+}
+
+func (m SkyViewModel) updateVisibilityForFocus() (SkyViewModel, tea.Cmd) {
+	if len(m.spacecraft) == 0 || m.focusIdx >= len(m.spacecraft) {
+		return m, nil
+	}
+
+	sc := m.spacecraft[m.focusIdx]
+	coord := sc.Coord()
+
+	// Update cache asynchronously
+	cache := m.visibilityCache
+	code := sc.Code
+	raDeg := coord.RAdeg
+	decDeg := coord.DecDeg
+
+	return m, func() tea.Msg {
+		cache.SetFocus(code)
+		_ = cache.UpdateVisibility(code, raDeg, decDeg)
+		return visibilityUpdateMsg{code: code}
+	}
+}
+
+// visibilityUpdateMsg is sent when visibility update completes
+type visibilityUpdateMsg struct {
+	code string
 }
 
 func (m SkyViewModel) fetchPathForFocus() (SkyViewModel, tea.Cmd) {
@@ -318,13 +367,24 @@ func (m SkyViewModel) focusNext() (SkyViewModel, tea.Cmd) {
 	m.focusIdx = (m.focusIdx + 1) % len(m.spacecraft)
 	m, animCmd := m.startAnimation()
 
+	var cmds []tea.Cmd
+	cmds = append(cmds, animCmd)
+
 	// If path mode is on, fetch path for new focus
-	var pathCmd tea.Cmd
 	if m.pathMode == PathOn {
+		var pathCmd tea.Cmd
 		m, pathCmd = m.fetchPathForFocus()
+		cmds = append(cmds, pathCmd)
 	}
 
-	return m, tea.Batch(animCmd, pathCmd)
+	// If visibility mode is on, update visibility for new focus
+	if m.visibilityMode == VisibilityOn {
+		var visCmd tea.Cmd
+		m, visCmd = m.updateVisibilityForFocus()
+		cmds = append(cmds, visCmd)
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m SkyViewModel) focusPrev() (SkyViewModel, tea.Cmd) {
@@ -337,13 +397,24 @@ func (m SkyViewModel) focusPrev() (SkyViewModel, tea.Cmd) {
 	}
 	m, animCmd := m.startAnimation()
 
+	var cmds []tea.Cmd
+	cmds = append(cmds, animCmd)
+
 	// If path mode is on, fetch path for new focus
-	var pathCmd tea.Cmd
 	if m.pathMode == PathOn {
+		var pathCmd tea.Cmd
 		m, pathCmd = m.fetchPathForFocus()
+		cmds = append(cmds, pathCmd)
 	}
 
-	return m, tea.Batch(animCmd, pathCmd)
+	// If visibility mode is on, update visibility for new focus
+	if m.visibilityMode == VisibilityOn {
+		var visCmd tea.Cmd
+		m, visCmd = m.updateVisibilityForFocus()
+		cmds = append(cmds, visCmd)
+	}
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m SkyViewModel) startAnimation() (SkyViewModel, tea.Cmd) {
@@ -461,9 +532,28 @@ func (m SkyViewModel) renderHeader() string {
 		pathStr = accentStyle.Render("Path: on")
 	}
 
+	// Visibility mode indicator
+	var visStr string
+	if m.visibilityMode == VisibilityOff {
+		visStr = dimStyle.Render("Vis: off")
+	} else {
+		visStr = accentStyle.Render("Vis: on")
+	}
+
 	compass := dimStyle.Render(fmt.Sprintf("Az:%.0f° El:%.0f°", m.camAz, m.camEl))
 
-	return fmt.Sprintf("%s | %s | %s | %s | %s", title, complexStr, labelStr, pathStr, compass)
+	header := fmt.Sprintf("%s | %s | %s | %s | %s | %s", title, complexStr, labelStr, pathStr, visStr, compass)
+
+	// If visibility mode is on, add visibility bar on second line
+	if m.visibilityMode == VisibilityOn && len(m.spacecraft) > 0 && m.focusIdx < len(m.spacecraft) {
+		sc := m.spacecraft[m.focusIdx]
+		visibility := m.visibilityCache.GetAllVisibility(sc.Code)
+		if len(visibility) > 0 {
+			header += "\n  " + RenderVisibilityBar(visibility)
+		}
+	}
+
+	return header
 }
 
 func (m SkyViewModel) renderStatus() string {
@@ -486,6 +576,28 @@ func (m SkyViewModel) renderStatus() string {
 	band := primary.Band
 	if band == "" {
 		band = "-"
+	}
+
+	// If visibility mode is on, show detailed visibility panel
+	if m.visibilityMode == VisibilityOn {
+		visibility := m.visibilityCache.GetAllVisibility(sc.Code)
+		if len(visibility) > 0 {
+			accentStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("229"))
+			dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(colorSpacecraft))
+
+			line1 := accentStyle.Render(fmt.Sprintf(">>> %s @ %s [%s] | Az:%.0f° El:%.0f° | ",
+				sc.Code, antennaList, band, coord.AzDeg, coord.ElDeg))
+			line1 += RenderSunSeparation(visibility)
+
+			var status strings.Builder
+			status.WriteString(line1)
+			if sc.Name != sc.Code {
+				status.WriteString("\n    " + dimStyle.Render(sc.Name))
+			}
+			status.WriteString("\n\n")
+			status.WriteString(RenderVisibilityPanel(visibility))
+			return status.String()
+		}
 	}
 
 	line1 := fmt.Sprintf(">>> %s @ %s [%s] | Az:%.0f° El:%.0f° | %s | Struggle: %.0f%%",

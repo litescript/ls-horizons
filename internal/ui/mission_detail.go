@@ -211,6 +211,12 @@ func (m MissionDetailModel) renderSpacecraftDetails(sc *dsn.Spacecraft) string {
 			b.WriteString(labelStyle.Render("Up Rate:"))
 			b.WriteString(valueStyle.Render(dsn.FormatDataRate(link.UpRate)))
 			b.WriteString("\n")
+
+			// Doppler modeling (based on carrier frequency)
+			b.WriteString("    ")
+			b.WriteString(labelStyle.Render("Doppler:"))
+			b.WriteString(valueStyle.Render(m.renderDopplerInfo(link.Band, sc.Distance)))
+			b.WriteString("\n")
 		}
 	}
 
@@ -224,6 +230,23 @@ func (m MissionDetailModel) renderSpacecraftDetails(sc *dsn.Spacecraft) string {
 	b.WriteString("\n")
 
 	return b.String()
+}
+
+// renderDopplerInfo renders Doppler information for a link.
+// Since we don't have measured Doppler from DSN, we show model parameters.
+func (m MissionDetailModel) renderDopplerInfo(band string, distanceKm float64) string {
+	if distanceKm <= 0 {
+		return "N/A"
+	}
+
+	freq := dsn.GetBandFrequency(band)
+	if freq <= 0 {
+		return "N/A"
+	}
+
+	// Without range rate data, we can only show the carrier frequency
+	// Real implementation would compute Doppler from range rate
+	return fmt.Sprintf("Model: %s @ %.0f MHz", band, freq)
 }
 
 // renderSparkline renders a simple text-based sparkline (placeholder).
