@@ -2,9 +2,10 @@
 package version
 
 // Version is the current application version.
-const Version = "0.7.0"
+const Version = "0.7.1"
 
 // Milestones:
+// 0.7.1 - Only shimmer update result, not "checking" state
 // 0.7.0 - Seamless in-app restart after update (Unix), Windows graceful fallback
 // 0.6.0 - Update check UX with shimmer reveal animation, in-app update install
 // 0.5.0 - Elevation sparkline in Mission view, per-spacecraft caching

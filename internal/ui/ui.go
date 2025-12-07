@@ -96,6 +96,7 @@ type Model struct {
 	ready              bool
 	statusMsg          string // Status message for update checks, etc.
 	statusMsgStartTick int    // animTick when statusMsg was set (for one-time shimmer)
+	statusMsgShimmer   bool   // True if statusMsg should have shimmer effect
 	statusMsgIsUpdate  bool   // True if statusMsg is showing an available update
 	updateVersion      string // Latest version available (for install)
 	animTick           int    // Animation tick for shimmer effects
@@ -181,7 +182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "u":
 			m.statusMsg = "Checking for updates..."
 			m.statusMsgIsUpdate = false
-			m.statusMsgStartTick = m.animTick
+			m.statusMsgShimmer = false // No shimmer for "checking" state
 			cmds = append(cmds, checkForUpdate())
 
 		case "U":
@@ -216,8 +217,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = fmt.Sprintf("You're on the latest version (v%s)", msg.info.CurrentVersion)
 			clearDelay = 5 * time.Second
 		}
-		// Record start tick for one-time shimmer animation
+		// Record start tick and enable shimmer for result
 		m.statusMsgStartTick = m.animTick
+		m.statusMsgShimmer = true
 		// Clear status message after delay
 		cmds = append(cmds, tea.Tick(clearDelay, func(t time.Time) tea.Msg {
 			return statusMsgClearMsg{}
@@ -488,8 +490,13 @@ func (m Model) renderLogo() string {
 	baseInfo := fmt.Sprintf("  (c) 2025 litescript.net | v%s | ", version.Version)
 	b.WriteString(muted.Render(baseInfo))
 	if m.statusMsg != "" {
-		// Show status with one-time fast shimmer effect (gold for updates)
-		b.WriteString(m.renderOneTimeShimmer(m.statusMsg, m.statusMsgStartTick, m.statusMsgIsUpdate))
+		if m.statusMsgShimmer {
+			// Show result with one-time fast shimmer effect (gold for updates)
+			b.WriteString(m.renderOneTimeShimmer(m.statusMsg, m.statusMsgStartTick, m.statusMsgIsUpdate))
+		} else {
+			// Show "checking" state without shimmer
+			b.WriteString(muted.Render(m.statusMsg))
+		}
 	} else {
 		b.WriteString(muted.Render("[u]check update"))
 	}
