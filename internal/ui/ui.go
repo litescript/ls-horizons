@@ -508,7 +508,7 @@ func gradientColor(col, row, width, height int) string {
 		t := xRatio / 0.33
 		r = 59 + t*(139-59)
 		g = 130 + t*(92-130)
-		b = 246 + t*(246-246)
+		b = 246 // stays constant in this section
 	} else if xRatio < 0.66 {
 		// Purple to Magenta
 		t := (xRatio - 0.33) / 0.33
@@ -795,14 +795,6 @@ func (m Model) renderShimmerText(text string) string {
 	}
 
 	return result.String()
-}
-
-// Helper to get link count for status display
-func countActiveLinks(data *dsn.DSNData) int {
-	if data == nil {
-		return 0
-	}
-	return len(data.Links)
 }
 
 // refreshAllPassPlans queues pass plan requests for all spacecraft that need it.
