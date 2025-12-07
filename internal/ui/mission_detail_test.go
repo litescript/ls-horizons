@@ -317,11 +317,12 @@ func TestInterpolateElevColor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Just ensure the function doesn't panic for edge cases
 			r, g, b := interpolateElevColor(tt.t)
-			// Basic sanity checks - colors should be valid uint8
-			if r > 255 || g > 255 || b > 255 {
-				t.Errorf("invalid color: r=%d, g=%d, b=%d", r, g, b)
-			}
+			// Log values for debugging (uint8 values are always 0-255)
+			_ = r
+			_ = g
+			_ = b
 		})
 	}
 

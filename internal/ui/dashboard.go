@@ -25,9 +25,6 @@ var (
 			Foreground(lipgloss.Color("39")).
 			Background(lipgloss.Color("235"))
 
-	rowStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
-
 	selectedRowStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("229")).
 				Background(lipgloss.Color("57"))
@@ -483,19 +480,6 @@ func (m DashboardModel) renderLinkDetail(link dsn.LinkView, selected bool) strin
 	return stationStyle.Render(line)
 }
 
-func (m DashboardModel) buildElevationMap() map[string]float64 {
-	elevMap := make(map[string]float64)
-	if m.snapshot.Data == nil {
-		return elevMap
-	}
-	for _, station := range m.snapshot.Data.Stations {
-		for _, ant := range station.Antennas {
-			elevMap[ant.ID] = ant.Elevation
-		}
-	}
-	return elevMap
-}
-
 func (m DashboardModel) renderStruggleBar(struggle float64) string {
 	// 5-char fill-style bar: ███░░
 	const barWidth = 5
@@ -526,16 +510,6 @@ func (m DashboardModel) GetSelectedSpacecraft() *dsn.SpacecraftView {
 		return nil
 	}
 	return &m.spacecraft[m.cursor]
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
 }
 
 // pad truncates or pads a string to exactly the given width.

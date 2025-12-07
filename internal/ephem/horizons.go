@@ -153,7 +153,7 @@ func (p *HorizonsProvider) queryHorizons(target TargetID, start, end time.Time, 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return EphemerisPath{}, fmt.Errorf("Horizons returned status %d (service may be unavailable)", resp.StatusCode)
+		return EphemerisPath{}, fmt.Errorf("horizons returned status %d (service may be unavailable)", resp.StatusCode)
 	}
 
 	return parseHorizonsResponse(target, body, obs)
@@ -175,7 +175,7 @@ func parseHorizonsResponse(target TargetID, body []byte, obs astro.Observer) (Ep
 	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<!DOCTYPE") ||
 		strings.HasPrefix(strings.TrimSpace(bodyStr), "<html") ||
 		strings.HasPrefix(strings.TrimSpace(bodyStr), "<HTML") {
-		return EphemerisPath{}, fmt.Errorf("Horizons API returned HTML error page (service may be unavailable)")
+		return EphemerisPath{}, fmt.Errorf("horizons API returned HTML error page (service may be unavailable)")
 	}
 
 	var resp horizonsResponse
@@ -398,7 +398,7 @@ func (p *HorizonsProvider) queryRADec(target TargetID, start, end time.Time, ste
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Horizons returned status %d (service may be unavailable)", resp.StatusCode)
+		return nil, fmt.Errorf("horizons returned status %d (service may be unavailable)", resp.StatusCode)
 	}
 
 	return parseRADecResponse(body)
@@ -411,7 +411,7 @@ func parseRADecResponse(body []byte) ([]astro.RADecAtTime, error) {
 	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<!DOCTYPE") ||
 		strings.HasPrefix(strings.TrimSpace(bodyStr), "<html") ||
 		strings.HasPrefix(strings.TrimSpace(bodyStr), "<HTML") {
-		return nil, fmt.Errorf("Horizons API returned HTML error page (service may be unavailable)")
+		return nil, fmt.Errorf("horizons API returned HTML error page (service may be unavailable)")
 	}
 
 	var resp horizonsResponse
@@ -585,7 +585,7 @@ func (p *HorizonsProvider) queryHeliocentricVectors(naifID int, t time.Time) (as
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return astro.Vec3{}, fmt.Errorf("Horizons returned status %d (service may be unavailable)", resp.StatusCode)
+		return astro.Vec3{}, fmt.Errorf("horizons returned status %d (service may be unavailable)", resp.StatusCode)
 	}
 
 	return parseVectorResponse(body)
@@ -598,7 +598,7 @@ func parseVectorResponse(body []byte) (astro.Vec3, error) {
 	if strings.HasPrefix(strings.TrimSpace(bodyStr), "<!DOCTYPE") ||
 		strings.HasPrefix(strings.TrimSpace(bodyStr), "<html") ||
 		strings.HasPrefix(strings.TrimSpace(bodyStr), "<HTML") {
-		return astro.Vec3{}, fmt.Errorf("Horizons API returned HTML error page (service may be unavailable)")
+		return astro.Vec3{}, fmt.Errorf("horizons API returned HTML error page (service may be unavailable)")
 	}
 
 	var resp horizonsResponse
