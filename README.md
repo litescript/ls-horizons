@@ -166,6 +166,7 @@ ls-horizons --snapshot-path -
 | `--watch` | `0` | Repeat output at interval |
 | `--snapshot-path` | `""` | Export JSON to file (`-` for stdout) |
 | `--log-level` | `info` | Log level (debug, info, warn, error) |
+| `-l`, `--log-file` | `""` | Write logs to file (e.g., `~/ls-horizons.log`) |
 
 ## Data Sources
 

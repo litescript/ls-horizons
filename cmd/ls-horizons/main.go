@@ -32,6 +32,7 @@ var (
 	beepMode      bool
 	eventsMode    bool
 	ephemMode     string
+	logFile       string
 )
 
 const (
@@ -54,6 +55,8 @@ func main() {
 	flag.BoolVar(&beepMode, "beep", false, "Beep on important events (TTY only)")
 	flag.BoolVar(&eventsMode, "events", false, "Show event log")
 	flag.StringVar(&ephemMode, "ephem", "auto", "Ephemeris source: horizons, dsn, or auto")
+	flag.StringVar(&logFile, "log-file", "", "Write logs to file (e.g., ~/ls-horizons.log)")
+	flag.StringVar(&logFile, "l", "", "Write logs to file (shorthand for --log-file)")
 	flag.Parse()
 
 	// Validate refresh interval
@@ -65,6 +68,24 @@ func main() {
 
 	// Set up logging
 	logger := logging.New(logging.ParseLevel(*logLevel))
+
+	// Set up log file if specified
+	if logFile != "" {
+		// Expand ~ to home directory
+		if len(logFile) > 0 && logFile[0] == '~' {
+			home, err := os.UserHomeDir()
+			if err == nil {
+				logFile = home + logFile[1:]
+			}
+		}
+		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not open log file %s: %v\n", logFile, err)
+		} else {
+			logger.SetOutput(f)
+			defer f.Close()
+		}
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
