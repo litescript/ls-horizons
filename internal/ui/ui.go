@@ -691,8 +691,8 @@ func (m Model) renderOneTimeShimmer(text string, startTick int, isUpdate bool) s
 	pos := elapsed * 4
 
 	// Color schemes
-	var finalR, finalG, finalB float64   // Final revealed color
-	var dimR, dimG, dimB float64         // Dim unrevealed color
+	var finalR, finalG, finalB float64 // Final revealed color
+	var dimR, dimG, dimB float64       // Dim unrevealed color
 
 	if isUpdate {
 		// Gold/amber for updates: #F6AD55 (246, 173, 85)
