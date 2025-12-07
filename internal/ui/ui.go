@@ -232,14 +232,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.statusMsg = fmt.Sprintf("Update failed: %v", msg.err)
 			m.statusMsgIsUpdate = false
+			// Clear after 10 seconds
+			cmds = append(cmds, tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
+				return statusMsgClearMsg{}
+			}))
 		} else {
-			m.statusMsg = fmt.Sprintf("Updated to v%s! Restart to use new version", msg.version)
+			// Success - trigger restart
+			m.statusMsg = fmt.Sprintf("Updated to v%s! Restarting...", msg.version)
 			m.statusMsgIsUpdate = false
+			RestartPending = true
+			// Brief delay to show message, then quit (main.go will exec)
+			cmds = append(cmds, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
+				return tea.Quit()
+			}))
 		}
-		// Clear after 10 seconds
-		cmds = append(cmds, tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
-			return statusMsgClearMsg{}
-		}))
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
