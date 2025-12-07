@@ -114,6 +114,18 @@ func main() {
 	// Create Bubble Tea program
 	p := tea.NewProgram(model, tea.WithAltScreen())
 
+	// Ensure terminal is restored on panic
+	defer func() {
+		if r := recover(); r != nil {
+			// Attempt to restore terminal state
+			p.Kill()
+			// Give it a moment to clean up
+			time.Sleep(100 * time.Millisecond)
+			fmt.Fprintf(os.Stderr, "\nPanic recovered: %v\n", r)
+			os.Exit(1)
+		}
+	}()
+
 	// Start fetch loop in background
 	go runFetchLoop(ctx, fetcher, stateMgr, p, logger)
 
@@ -125,6 +137,14 @@ func main() {
 }
 
 func runFetchLoop(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, p *tea.Program, logger *logging.Logger) {
+	// Recover from panics in this goroutine
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("Panic in fetch loop: %v", r)
+			p.Kill()
+		}
+	}()
+
 	interval := stateMgr.RefreshInterval()
 
 	// Calculate next aligned refresh time and set it before initial fetch

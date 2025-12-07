@@ -219,9 +219,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.solarCache.NeedsSpacecraftRefresh() {
 				_ = m.solarCache.UpdateSpacecraft(m.snapshot.Data)
 			}
-			// Planet updates are slow (HTTP calls) - do async
+			// Planet updates are slow (HTTP calls) - do async with panic recovery
 			if m.solarCache.NeedsPlanetRefresh() {
-				go m.solarCache.UpdatePlanets()
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							// Log but don't crash - planet data is non-critical
+						}
+					}()
+					m.solarCache.UpdatePlanets()
+				}()
 			}
 			solarSnap := m.solarCache.GetSnapshot()
 			m.solarSystem = m.solarSystem.UpdateData(m.snapshot, solarSnap)
