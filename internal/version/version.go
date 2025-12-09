@@ -2,9 +2,10 @@
 package version
 
 // Version is the current application version.
-const Version = "0.7.1"
+const Version = "0.7.2"
 
 // Milestones:
+// 0.7.2 - Fix Mission tab spacecraft selection, fix "pass in now" grammar
 // 0.7.1 - Only shimmer update result, not "checking" state
 // 0.7.0 - Seamless in-app restart after update (Unix), Windows graceful fallback
 // 0.6.0 - Update check UX with shimmer reveal animation, in-app update install
