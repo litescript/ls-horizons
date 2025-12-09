@@ -110,6 +110,17 @@ func (m *MissionDetailModel) selectNextSpacecraft() {
 	if len(m.snapshot.Spacecraft) == 0 {
 		return
 	}
+	// If no valid selection, select first valid spacecraft
+	if m.selectedID < 0 {
+		for _, sc := range m.snapshot.Spacecraft {
+			if !isStationNotSpacecraft(sc.Name) {
+				m.selectedID = sc.ID
+				m.scrollY = 0
+				return
+			}
+		}
+		return
+	}
 	// Find current index, then find next valid (non-station) spacecraft
 	foundCurrent := false
 	for _, sc := range m.snapshot.Spacecraft {
@@ -129,6 +140,17 @@ func (m *MissionDetailModel) selectNextSpacecraft() {
 
 func (m *MissionDetailModel) selectPrevSpacecraft() {
 	if len(m.snapshot.Spacecraft) == 0 {
+		return
+	}
+	// If no valid selection, select first valid spacecraft
+	if m.selectedID < 0 {
+		for _, sc := range m.snapshot.Spacecraft {
+			if !isStationNotSpacecraft(sc.Name) {
+				m.selectedID = sc.ID
+				m.scrollY = 0
+				return
+			}
+		}
 		return
 	}
 	// Find previous valid (non-station) spacecraft
@@ -664,9 +686,15 @@ func (m MissionDetailModel) renderPassPanel() string {
 
 	if next := passPlan.GetNextPass(); next != nil {
 		until := time.Until(next.Start)
-		b.WriteString(nextStyle.Render(fmt.Sprintf("  ▷ Next: %s pass in %s",
-			dsn.ComplexShortName(next.Complex),
-			formatDuration(until))))
+		if until <= 0 {
+			// Pass is starting now
+			b.WriteString(nextStyle.Render(fmt.Sprintf("  ▷ Next: %s pass starting now",
+				dsn.ComplexShortName(next.Complex))))
+		} else {
+			b.WriteString(nextStyle.Render(fmt.Sprintf("  ▷ Next: %s pass in %s",
+				dsn.ComplexShortName(next.Complex),
+				formatDuration(until))))
+		}
 		b.WriteString("\n")
 	}
 
