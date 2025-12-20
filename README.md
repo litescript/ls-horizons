@@ -245,6 +245,19 @@ internal/
 
 A play on the Unix `ls` command — this tool lets you "list" what's happening at the horizons of our solar system. Also a nod to NASA's New Horizons mission to Pluto and beyond.
 
+## Changelog
+
+- **0.7.3** — Fix orbit trace mismatch when rapidly switching focused spacecraft
+- **0.7.2** — Fix Mission tab spacecraft selection, fix "pass in now" grammar
+- **0.7.1** — Only shimmer update result, not "checking" state
+- **0.7.0** — Seamless in-app restart after update (Unix), Windows graceful fallback
+- **0.6.0** — Update check UX with shimmer reveal animation, in-app update install
+- **0.5.0** — Elevation sparkline in Mission view, per-spacecraft caching
+- **0.4.0** — Visibility engine, sun separation angle, Doppler modeling
+- **0.3.0** — JPL Horizons ephemeris integration, trajectory path arcs, `--ephem` flag
+- **0.2.0** — Real star catalog, astronomical projection, SpacecraftView abstraction
+- **0.1.0** — Initial release: TUI dashboard, sky view, headless modes, event tracking
+
 ## Contributing
 
 Contributions welcome! Please:

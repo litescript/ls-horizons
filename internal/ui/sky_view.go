@@ -252,7 +252,9 @@ func (m SkyViewModel) Update(msg tea.Msg) (SkyViewModel, tea.Cmd) {
 
 	case pathFetchMsg:
 		m.pathFetchPending = false
-		if msg.err == nil {
+		// Only accept path if it matches the currently focused spacecraft
+		// (user may have changed focus while fetch was in-flight)
+		if msg.err == nil && msg.path.TargetID == m.pathFocusTarget {
 			m.currentPath = msg.path
 			m.pathLastFetch = time.Now()
 		}
