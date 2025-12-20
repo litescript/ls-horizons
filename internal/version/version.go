@@ -2,9 +2,10 @@
 package version
 
 // Version is the current application version.
-const Version = "0.7.2"
+const Version = "0.7.3"
 
 // Milestones:
+// 0.7.3 - Fix orbit trace mismatch when rapidly switching focused spacecraft
 // 0.7.2 - Fix Mission tab spacecraft selection, fix "pass in now" grammar
 // 0.7.1 - Only shimmer update result, not "checking" state
 // 0.7.0 - Seamless in-app restart after update (Unix), Windows graceful fallback
