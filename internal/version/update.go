@@ -21,6 +21,11 @@ type GitHubRelease struct {
 	TagName string `json:"tag_name"`
 }
 
+// GitHubTag represents the GitHub API response for tags.
+type GitHubTag struct {
+	Name string `json:"name"`
+}
+
 // CheckForUpdate checks GitHub for the latest release version.
 func CheckForUpdate() UpdateInfo {
 	info := UpdateInfo{
@@ -70,7 +75,7 @@ func checkForUpdateViaTags(info UpdateInfo, client *http.Client) UpdateInfo {
 		return info
 	}
 
-	var tags []GitHubRelease
+	var tags []GitHubTag
 	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
 		info.Error = fmt.Errorf("failed to parse update response: %w", err)
 		return info
@@ -82,7 +87,7 @@ func checkForUpdateViaTags(info UpdateInfo, client *http.Client) UpdateInfo {
 	}
 
 	// Tags are returned newest first
-	info.LatestVersion = normalizeVersion(tags[0].TagName)
+	info.LatestVersion = normalizeVersion(tags[0].Name)
 	info.UpdateAvailable = isNewerVersion(info.LatestVersion, info.CurrentVersion)
 
 	return info
