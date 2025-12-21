@@ -75,9 +75,21 @@ cd ls-horizons
 go build -o ls-horizons ./cmd/ls-horizons
 ```
 
-### Pre-built binary (macOS ARM)
+### Pre-built binaries
 
-A pre-built binary for macOS ARM is available in `os-builds/mac-arm/`. Note that this may lag behind the latest source and is not extensively tested.
+Pre-built binaries are available in `os-builds/`. Note that these may lag behind the latest source.
+
+**macOS ARM (Apple Silicon):**
+```bash
+./os-builds/mac-arm/ls-horizons
+```
+
+**Windows (x64):**
+```powershell
+.\os-builds\windows-amd64\ls-horizons.exe
+```
+
+> **Windows users:** Use [Windows Terminal](https://aka.ms/terminal) for best results. It's included by default on Windows 11, or install free from the Microsoft Store on Windows 10. The legacy cmd.exe and PowerShell windows have limited color support and may not render correctly. Windows Terminal defaults to a dark background; the legacy blue PowerShell background will look odd with this app.
 
 ## Usage
 

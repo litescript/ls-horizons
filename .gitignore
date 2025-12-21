@@ -7,6 +7,7 @@ CLAUDE.md
 
 # Go
 *.exe
+!os-builds/**/*.exe
 *.exe~
 *.dll
 *.so
