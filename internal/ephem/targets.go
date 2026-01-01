@@ -10,6 +10,25 @@ type TargetInfo struct {
 	HorizCmd string   // Horizons command string (if different from NAIF ID)
 }
 
+// FastOrbiterStepMinutes returns the recommended ephemeris step size in minutes
+// for a given spacecraft. Fast orbiters (lunar, Mars, Earth) need finer sampling
+// to render smooth trajectory arcs. Returns 1 for fast orbiters, 5 for deep space.
+func FastOrbiterStepMinutes(naifID TargetID) int {
+	switch naifID {
+	// Lunar orbiters (~2h orbital period)
+	case NAIFLRO, NAIFKoreaLunar, NAIFSLIM, NAIFChandrayaan3, NAIFCapstone:
+		return 1
+	// Mars orbiters (~2h orbital period)
+	case NAIFMRO, NAIFMarsOdyssey, NAIFMAVEN, NAIFMarsExpress, NAIFExoMarsTGO, NAIFHopeMars:
+		return 1
+	// Earth orbiters (~90min orbital period)
+	case NAIFHubble, NAIFChandra, NAIFTESS, NAIFSWOT, NAIFIXPE, NAIFNUSTAR, NAIFFermi:
+		return 1
+	default:
+		return 5
+	}
+}
+
 // Common NAIF SPICE IDs for DSN-tracked spacecraft.
 // Sourced from https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/req/naif_ids.html
 const (

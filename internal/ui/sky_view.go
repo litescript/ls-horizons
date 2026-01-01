@@ -351,10 +351,12 @@ func (m SkyViewModel) fetchPathForFocus() (SkyViewModel, tea.Cmd) {
 	// Create async fetch command
 	provider := m.pathProvider
 	now := time.Now()
-	// Fetch ±6 hours with 5-minute steps for smooth arcs
+	// Fetch ±6 hours; step size depends on orbital period
+	// Fast orbiters (lunar, Mars, Earth) get 1-min steps for smooth arcs
 	start := now.Add(-6 * time.Hour)
 	end := now.Add(6 * time.Hour)
-	step := 5 * time.Minute
+	stepMinutes := ephem.FastOrbiterStepMinutes(naifID)
+	step := time.Duration(stepMinutes) * time.Minute
 
 	return m, func() tea.Msg {
 		path, err := provider.GetPath(naifID, start, end, step, obs)
