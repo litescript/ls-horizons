@@ -77,7 +77,12 @@ go build -o ls-horizons ./cmd/ls-horizons
 
 ### Pre-built binaries
 
-Pre-built binaries are available in `os-builds/`. Note that these may lag behind the latest source.
+Pre-built binaries are available in `os-builds/`. These are statically linked with no dependencies. Note that they may lag behind the latest source.
+
+**Linux (x64):**
+```bash
+./os-builds/linux-amd64/ls-horizons
+```
 
 **macOS ARM (Apple Silicon):**
 ```bash
