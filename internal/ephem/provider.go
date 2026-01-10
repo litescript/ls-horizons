@@ -15,6 +15,13 @@ type EphemerisPoint struct {
 	Time  time.Time
 	Coord astro.SkyCoord // RA/Dec and optionally Az/El if computed
 	Valid bool           // Whether this point has valid data
+
+	// Range and light-time data (from Horizons QUANTITIES 20,21)
+	RangeAU       float64 // Observer-target distance in AU
+	RangeKm       float64 // Observer-target distance in km
+	RangeRateKmS  float64 // Range rate (radial velocity) in km/s
+	OneWayLTMin   float64 // One-way down-leg light time in minutes
+	HasRangeData  bool    // True if range/light-time data is valid
 }
 
 // EphemerisPath represents a trajectory arc over time.

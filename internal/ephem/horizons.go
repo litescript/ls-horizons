@@ -137,7 +137,7 @@ func (p *HorizonsProvider) queryHorizons(target TargetID, start, end time.Time, 
 	params.Set("START_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(start)))
 	params.Set("STOP_TIME", fmt.Sprintf("'%s'", formatHorizonsTime(end)))
 	params.Set("STEP_SIZE", fmt.Sprintf("'%s'", formatStepSize(step)))
-	params.Set("QUANTITIES", "'4'") // 4=Apparent Az/El
+	params.Set("QUANTITIES", "'4,20,21'") // 4=Apparent Az/El, 20=Range/RangeRate, 21=One-way light time
 
 	reqURL := HorizonsAPIURL + "?" + params.Encode()
 
@@ -233,9 +233,9 @@ func parseEphemerisTable(result string, obs astro.Observer) ([]EphemerisPoint, e
 }
 
 // parseEphemerisLine parses a single ephemeris data line.
-// Format for QUANTITIES='4' (Az/El):
-// 2025-Dec-05 00:00 *   261.032124  32.878027
-// Fields: date, time, flags, azimuth, elevation
+// Format for QUANTITIES='4,20,21' (Az/El, Range/RangeRate, LightTime):
+// 2025-Dec-05 00:00 *   261.032124  32.878027  1.234567  -0.123  10.234
+// Fields: date, time, flags, azimuth, elevation, delta(AU), deldot(km/s), LT(min)
 func parseEphemerisLine(line string, obs astro.Observer) (EphemerisPoint, error) {
 	fields := strings.Fields(line)
 	if len(fields) < 4 {
@@ -249,36 +249,40 @@ func parseEphemerisLine(line string, obs astro.Observer) (EphemerisPoint, error)
 		return EphemerisPoint{}, err
 	}
 
-	// Find Az/El values - they're the last two numeric fields
+	// Collect all numeric values after date/time
 	// Skip any flag fields (like *, *m, Cm, Nm, Am, etc.)
-	var az, el float64
-	numericCount := 0
-
+	var nums []float64
 	for i := 2; i < len(fields); i++ {
 		val, err := strconv.ParseFloat(fields[i], 64)
 		if err == nil {
-			numericCount++
-			if numericCount == 1 {
-				az = val
-			} else if numericCount == 2 {
-				el = val
-				break
-			}
+			nums = append(nums, val)
 		}
 	}
 
-	if numericCount < 2 {
+	if len(nums) < 2 {
 		return EphemerisPoint{}, fmt.Errorf("could not find Az/El values")
 	}
 
-	return EphemerisPoint{
+	// nums[0]=az, nums[1]=el
+	point := EphemerisPoint{
 		Time: t,
 		Coord: astro.SkyCoord{
-			AzDeg: az,
-			ElDeg: el,
+			AzDeg: nums[0],
+			ElDeg: nums[1],
 		},
 		Valid: true,
-	}, nil
+	}
+
+	// If we have range data: nums[2]=deltaAU, nums[3]=deldotKmS, nums[4]=oneWayMin
+	if len(nums) >= 5 {
+		point.RangeAU = nums[2]
+		point.RangeKm = astro.AUToKm(nums[2])
+		point.RangeRateKmS = nums[3]
+		point.OneWayLTMin = nums[4]
+		point.HasRangeData = true
+	}
+
+	return point, nil
 }
 
 // parseHorizonsDateTime parses Horizons date format like "2025-Dec-05 00:00".

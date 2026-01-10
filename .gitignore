@@ -33,3 +33,9 @@ Thumbs.db
 *.tmp
 .env
 .env.local
+
+# Archives
+*.tar.*
+*.gz
+*.bz2
+*.lzip

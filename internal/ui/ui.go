@@ -74,6 +74,15 @@ type (
 		err          error
 	}
 
+	// ephemRangeUpdatedMsg signals ephemeris range/light-time fetch completed.
+	ephemRangeUpdatedMsg struct {
+		spacecraftID int
+		complex      dsn.Complex
+		point        ephem.EphemerisPoint
+		fetchedAt    time.Time
+		err          error
+	}
+
 	// DashboardOpenMissionMsg requests opening Mission view for a spacecraft.
 	DashboardOpenMissionMsg struct {
 		SpacecraftID int
@@ -337,6 +346,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Push to mission detail immediately so data shows without waiting for tick
 		m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 
+	case ephemRangeUpdatedMsg:
+		// Update mission detail with ephemeris range estimate
+		m.missionDetail = m.missionDetail.UpdateEphemEstimate(
+			msg.spacecraftID, msg.complex, msg.point, msg.fetchedAt, msg.err,
+		)
+
 	case SpacecraftChangedMsg:
 		// Forward from mission detail - immediately update focused spacecraft
 		if msg.SpacecraftID > 0 {
@@ -359,6 +374,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Also trigger elevation trace refresh if needed
 			if cmd := m.maybeRefreshElevTrace(msg.SpacecraftID); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Trigger ephemeris range fetch if needed
+			if cmd := m.maybeRefreshEphemRange(msg.SpacecraftID); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
@@ -389,6 +408,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Also trigger elevation trace refresh if needed
 			if cmd := m.maybeRefreshElevTrace(msg.SpacecraftID); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Trigger ephemeris range fetch if needed
+			if cmd := m.maybeRefreshEphemRange(msg.SpacecraftID); cmd != nil {
 				cmds = append(cmds, cmd)
 			}
 		}
@@ -1098,5 +1121,128 @@ func (m *Model) refreshElevTraceFor(spacecraftID int, complex dsn.Complex) tea.C
 
 		trace := dsn.ComputeElevationTrace(scCode, complex, samples, now)
 		return elevTraceUpdatedMsg{spacecraftID: spacecraftID, trace: trace, complex: complex, err: nil}
+	}
+}
+
+// maybeRefreshEphemRange checks if ephemeris range data needs refreshing.
+func (m *Model) maybeRefreshEphemRange(spacecraftID int) tea.Cmd {
+	if spacecraftID == 0 {
+		return nil
+	}
+
+	// Find spacecraft and its active links
+	var sc *dsn.Spacecraft
+	for i := range m.snapshot.Spacecraft {
+		if m.snapshot.Spacecraft[i].ID == spacecraftID {
+			sc = &m.snapshot.Spacecraft[i]
+			break
+		}
+	}
+
+	if sc == nil || len(sc.Links) == 0 {
+		// No active links - don't attempt ephemeris fetch
+		return nil
+	}
+
+	// Get the active tracking complex from primary link
+	activeComplex := m.getActiveTrackingComplex(sc)
+	if activeComplex == "" {
+		return nil
+	}
+
+	// Check if we need to refresh
+	if !m.missionDetail.NeedsEphemRefresh(spacecraftID, activeComplex) {
+		return nil
+	}
+
+	return m.refreshEphemRangeFor(spacecraftID, sc.Name, activeComplex)
+}
+
+// getActiveTrackingComplex returns the complex currently tracking the spacecraft.
+// Selects the link with highest DataRate; tie-break by StationID then AntennaID.
+func (m *Model) getActiveTrackingComplex(sc *dsn.Spacecraft) dsn.Complex {
+	if sc == nil || len(sc.Links) == 0 {
+		return ""
+	}
+
+	// Find best link: highest DataRate, then alphabetically lower StationID, then AntennaID
+	var best *dsn.Link
+	for i := range sc.Links {
+		link := &sc.Links[i]
+		if best == nil {
+			best = link
+			continue
+		}
+		if link.DataRate > best.DataRate {
+			best = link
+		} else if link.DataRate == best.DataRate {
+			if link.StationID < best.StationID {
+				best = link
+			} else if link.StationID == best.StationID && link.AntennaID < best.AntennaID {
+				best = link
+			}
+		}
+	}
+
+	if best == nil {
+		return ""
+	}
+	return best.Complex
+}
+
+// refreshEphemRangeFor starts async ephemeris range fetch for a spacecraft.
+func (m *Model) refreshEphemRangeFor(spacecraftID int, scName string, complex dsn.Complex) tea.Cmd {
+	if scName == "" || complex == "" {
+		return nil
+	}
+
+	// Mark as loading
+	m.missionDetail = m.missionDetail.SetEphemLoading(true)
+
+	// Look up NAIF ID
+	naifID := ephem.GetNAIFID(scName)
+	if naifID == 0 {
+		naifID = ephem.GetNAIFIDByName(scName)
+	}
+	if naifID == 0 {
+		return func() tea.Msg {
+			return ephemRangeUpdatedMsg{
+				spacecraftID: spacecraftID,
+				complex:      complex,
+				point:        ephem.EphemerisPoint{},
+				fetchedAt:    time.Now(),
+				err:          fmt.Errorf("unknown spacecraft: %s", scName),
+			}
+		}
+	}
+
+	// Get Horizons provider
+	hp, ok := m.ephemProvider.(*ephem.HorizonsProvider)
+	if !ok {
+		return func() tea.Msg {
+			return ephemRangeUpdatedMsg{
+				spacecraftID: spacecraftID,
+				complex:      complex,
+				point:        ephem.EphemerisPoint{},
+				fetchedAt:    time.Now(),
+				err:          fmt.Errorf("ephemeris provider does not support range queries"),
+			}
+		}
+	}
+
+	// Get observer for the tracking complex
+	obs := dsn.ObserverForComplex(complex)
+
+	// Fetch ephemeris async
+	return func() tea.Msg {
+		now := time.Now()
+		point, err := hp.GetPosition(naifID, now, obs)
+		return ephemRangeUpdatedMsg{
+			spacecraftID: spacecraftID,
+			complex:      complex,
+			point:        point,
+			fetchedAt:    now,
+			err:          err,
+		}
 	}
 }

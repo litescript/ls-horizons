@@ -14,13 +14,14 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 - **Real star catalog** — 150+ bright stars with accurate J2000 coordinates rendered in the sky view
 - **Astronomical projection** — Proper RA/Dec to Az/El conversion using GMST/LST calculations
 - **JPL Horizons integration** — Trajectory path arcs and geocentric RA/Dec for pass planning
+- **Signal propagation visualizer** — Animated light-time display showing one-way/round-trip delay with pulse animation
 - **Four view modes**:
   - **Dashboard** — Complex status and active spacecraft table with multi-antenna tracking
-  - **Mission Detail** — Per-spacecraft deep dive with pass schedules and link details
+  - **Mission Detail** — Per-spacecraft deep dive with pass schedules, link details, and propagation delay
   - **Sky View** — Animated star field with spacecraft positions and smooth camera transitions
   - **Orbit View** — Solar system visualization with real planet positions and spacecraft trajectories
 - **Derived metrics**:
-  - Distance calculated from round-trip light time (RTLT)
+  - Distance calculated from round-trip light time (RTLT), with JPL Horizons fallback
   - Velocity estimation from RTLT delta
   - "Struggle index" — composite difficulty metric based on distance, data rate, and elevation
 - **Event detection** — Tracks link handoffs between complexes, new acquisitions, and signal losses
@@ -34,7 +35,7 @@ Real-time status of all three DSN complexes with active spacecraft table showing
 ![Dashboard](docs/screenshots/dashboard.png)
 
 ### Mission Detail View
-Deep dive into individual spacecraft with link details, pass schedules, and elevation sparkline showing ±2h visibility trace. Press `Enter` from Dashboard to jump directly here.
+Deep dive into individual spacecraft with link details, pass schedules, elevation sparkline, and signal propagation visualizer showing light-time delay with animated pulse. Press `Enter` from Dashboard to jump directly here.
 
 ![Mission Detail](docs/screenshots/mission.png)
 
@@ -210,7 +211,7 @@ Spacecraft trajectory data from NASA/JPL's Horizons system:
 https://ssd.jpl.nasa.gov/api/horizons.api
 ```
 
-Used for computing accurate sky positions and trajectory path arcs. Supports 35+ spacecraft with NAIF SPICE ID mappings including Voyager 1/2, JWST, Mars rovers, Juno, New Horizons, and more.
+Used for computing accurate sky positions, trajectory path arcs, and range/light-time estimates when DSN data is unavailable. Supports 45+ spacecraft with NAIF SPICE ID mappings including Voyager 1/2, JWST, Mars rovers, Juno, New Horizons, and more.
 
 ### Yale Bright Star Catalog
 
@@ -264,6 +265,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.8.0** — Signal propagation delay visualizer, ephemeris range/light-time fallback via Horizons
 - **0.7.3** — Fix orbit trace mismatch when rapidly switching focused spacecraft
 - **0.7.2** — Fix Mission tab spacecraft selection, fix "pass in now" grammar
 - **0.7.1** — Only shimmer update result, not "checking" state
