@@ -23,7 +23,18 @@ type MissionDetailModel struct {
 	showPassPanel bool
 	passPlan      *dsn.PassPlan
 	animTick      int // Animation tick for shimmer effects
+
+	// Ephemeris estimate cache (for range/light-time when DSN data unavailable)
+	ephemPoint      ephem.EphemerisPoint
+	ephemForID      int         // Spacecraft ID this estimate is for
+	ephemForComplex dsn.Complex // Observer complex used for estimate
+	ephemFetchedAt  time.Time   // When the estimate was fetched
+	ephemErr        error       // Error from last fetch attempt
+	ephemLoading    bool        // True if fetch is in progress
 }
+
+// EphemCacheTTL is how long to use cached ephemeris data before refetching.
+const EphemCacheTTL = 60 * time.Second
 
 // NewMissionDetailModel creates a new mission detail model.
 func NewMissionDetailModel() MissionDetailModel {
@@ -195,6 +206,12 @@ func (m MissionDetailModel) View() string {
 	// Spacecraft details first
 	b.WriteString(m.renderSpacecraftDetails(selected))
 
+	// Propagation delay visualizer
+	if propPanel := m.renderPropagationPanel(selected, m.width); propPanel != "" {
+		b.WriteString("\n")
+		b.WriteString(propPanel)
+	}
+
 	// Pass panel below details (if enabled)
 	if m.showPassPanel {
 		b.WriteString("\n")
@@ -265,9 +282,27 @@ func (m MissionDetailModel) renderSpacecraftDetails(sc *dsn.Spacecraft) string {
 	b.WriteString(strings.Repeat("─", len(displayName)+4))
 	b.WriteString("\n\n")
 
+	dimStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	ephemStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("139")) // Muted purple for ephemeris data
+
 	// Core metrics
 	b.WriteString(labelStyle.Render("Distance:"))
-	b.WriteString(valueStyle.Render(dsn.FormatDistance(sc.Distance)))
+	if sc.Distance > 0 {
+		b.WriteString(valueStyle.Render(dsn.FormatDistance(sc.Distance)))
+	} else {
+		b.WriteString(dimStyle.Render("Awaiting DSN range data..."))
+		// Show ephemeris estimate if available
+		if ephemPoint, ephemComplex, ok := m.GetEphemEstimate(sc.ID); ok {
+			b.WriteString("\n")
+			b.WriteString(labelStyle.Render(""))
+			b.WriteString(ephemStyle.Render(fmt.Sprintf("Horizons est. (%s): %s",
+				dsn.ComplexShortName(ephemComplex),
+				dsn.FormatDistance(ephemPoint.RangeKm))))
+		}
+	}
 	b.WriteString("\n")
 
 	// Active links count
@@ -539,6 +574,49 @@ func (m MissionDetailModel) ShowPassPanel() bool {
 	return m.showPassPanel
 }
 
+// UpdateEphemEstimate updates the cached ephemeris estimate.
+func (m MissionDetailModel) UpdateEphemEstimate(spacecraftID int, complex dsn.Complex, point ephem.EphemerisPoint, fetchedAt time.Time, err error) MissionDetailModel {
+	m.ephemForID = spacecraftID
+	m.ephemForComplex = complex
+	m.ephemPoint = point
+	m.ephemFetchedAt = fetchedAt
+	m.ephemErr = err
+	m.ephemLoading = false
+	return m
+}
+
+// SetEphemLoading sets the loading state for ephemeris fetch.
+func (m MissionDetailModel) SetEphemLoading(loading bool) MissionDetailModel {
+	m.ephemLoading = loading
+	return m
+}
+
+// NeedsEphemRefresh returns true if we should fetch new ephemeris data.
+// Conditions: different spacecraft/complex, or cache expired, and not currently loading.
+func (m MissionDetailModel) NeedsEphemRefresh(spacecraftID int, complex dsn.Complex) bool {
+	if m.ephemLoading {
+		return false
+	}
+	if m.ephemForID != spacecraftID || m.ephemForComplex != complex {
+		return true
+	}
+	if time.Since(m.ephemFetchedAt) > EphemCacheTTL {
+		return true
+	}
+	return false
+}
+
+// GetEphemEstimate returns the cached ephemeris estimate if valid for the given spacecraft.
+func (m MissionDetailModel) GetEphemEstimate(spacecraftID int) (ephem.EphemerisPoint, dsn.Complex, bool) {
+	if m.ephemForID != spacecraftID {
+		return ephem.EphemerisPoint{}, "", false
+	}
+	if !m.ephemPoint.Valid || !m.ephemPoint.HasRangeData {
+		return ephem.EphemerisPoint{}, "", false
+	}
+	return m.ephemPoint, m.ephemForComplex, true
+}
+
 // renderPassPanel renders the pass & handoff panel.
 func (m MissionDetailModel) renderPassPanel() string {
 	var b strings.Builder
@@ -771,4 +849,255 @@ func (m MissionDetailModel) renderShimmerText(text string) string {
 	}
 
 	return result.String()
+}
+
+// PropagationAnimPeriod is the number of animation ticks for one full pulse traversal.
+// At 80ms per tick, 31 ticks ≈ 2.5 seconds.
+const PropagationAnimPeriod = 31
+
+// renderPropagationPanel renders the signal propagation delay visualizer.
+// It shows one-way and round-trip light times with animated pulses traveling
+// between Earth and the spacecraft.
+func (m MissionDetailModel) renderPropagationPanel(sc *dsn.Spacecraft, width int) string {
+	if sc == nil {
+		return ""
+	}
+
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("205"))
+
+	dimStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("240"))
+
+	// Find the best link (highest DataRate, fallback to first)
+	var bestLink *dsn.Link
+	for i := range sc.Links {
+		if bestLink == nil || sc.Links[i].DataRate > bestLink.DataRate {
+			bestLink = &sc.Links[i]
+		}
+	}
+
+	// Try to get RTLT: first from link, then calculate from distance
+	var rtlt float64
+	var usingEphemeris bool
+	var ephemComplex dsn.Complex
+
+	if bestLink != nil && bestLink.RTLT > 0 {
+		rtlt = bestLink.RTLT
+	} else if sc.Distance > 0 {
+		// Calculate RTLT from distance: rtlt = 2 * distance / speed_of_light
+		rtlt = (sc.Distance / dsn.SpeedOfLight) * 2
+	} else if bestLink != nil && bestLink.Distance > 0 {
+		rtlt = (bestLink.Distance / dsn.SpeedOfLight) * 2
+	}
+
+	// If no DSN data, try ephemeris fallback
+	if rtlt <= 0 {
+		if ephemPoint, complex, ok := m.GetEphemEstimate(sc.ID); ok {
+			// Use ephemeris one-way light time (in minutes), convert to RTLT in seconds
+			rtlt = ephemPoint.OneWayLTMin * 60 * 2 // Convert one-way minutes to round-trip seconds
+			usingEphemeris = true
+			ephemComplex = complex
+		}
+	}
+
+	// Show header with appropriate message if no data available
+	if bestLink == nil {
+		var b strings.Builder
+		b.WriteString(headerStyle.Render("Propagation"))
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render("  No active link"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	if rtlt <= 0 {
+		var b strings.Builder
+		b.WriteString(headerStyle.Render("Propagation"))
+		b.WriteString("\n")
+		if m.ephemLoading {
+			b.WriteString(dimStyle.Render("  Loading ephemeris..."))
+		} else {
+			b.WriteString(dimStyle.Render("  Awaiting range data..."))
+		}
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	var b strings.Builder
+
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	earthStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("39")).
+		Bold(true)
+
+	scStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("229")).
+		Bold(true)
+
+	upPulseStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("46")).
+		Bold(true)
+
+	downPulseStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214")).
+		Bold(true)
+
+	// Calculate light times (rtlt already computed above)
+	oneWay := rtlt / 2 // One-way light time
+	oneWayDur := time.Duration(oneWay * float64(time.Second))
+	rtltDur := time.Duration(rtlt * float64(time.Second))
+
+	// Use snapshot timestamp as "now" for consistency
+	now := time.Now()
+	if m.snapshot.Data != nil && !m.snapshot.Data.Timestamp.IsZero() {
+		now = m.snapshot.Data.Timestamp
+	}
+
+	ephemStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("139")) // Muted purple for ephemeris data
+
+	// Header
+	b.WriteString(headerStyle.Render("Propagation"))
+	if usingEphemeris {
+		b.WriteString(ephemStyle.Render(fmt.Sprintf(" (Horizons est. via %s)", dsn.ComplexShortName(ephemComplex))))
+	}
+	b.WriteString("\n")
+
+	// Time displays
+	b.WriteString(labelStyle.Render("  One-way:     "))
+	if usingEphemeris {
+		b.WriteString(ephemStyle.Render(formatLightTime(oneWayDur)))
+	} else {
+		b.WriteString(valueStyle.Render(formatLightTime(oneWayDur)))
+	}
+	b.WriteString(labelStyle.Render("    Round-trip: "))
+	if usingEphemeris {
+		b.WriteString(ephemStyle.Render(formatLightTime(rtltDur)))
+	} else {
+		b.WriteString(valueStyle.Render(formatLightTime(rtltDur)))
+	}
+	b.WriteString("\n")
+
+	// Arrival/reception times
+	arrivalTime := now.Add(oneWayDur)
+	telemetryTime := now.Add(-oneWayDur)
+
+	b.WriteString(labelStyle.Render("  Transmit now → arrives: "))
+	if usingEphemeris {
+		b.WriteString(ephemStyle.Render("~" + arrivalTime.Format("15:04:05")))
+	} else {
+		b.WriteString(valueStyle.Render(arrivalTime.Format("15:04:05")))
+	}
+	b.WriteString("\n")
+
+	b.WriteString(labelStyle.Render("  Seeing telemetry from:  "))
+	if usingEphemeris {
+		b.WriteString(ephemStyle.Render("~" + telemetryTime.Format("15:04:05")))
+	} else {
+		b.WriteString(valueStyle.Render(telemetryTime.Format("15:04:05")))
+	}
+	b.WriteString("\n\n")
+
+	// Calculate bar width: clamp to 20..60, leave room for labels
+	barWidth := width - 20 // Account for "Earth [" and "] SC" labels
+	if barWidth < 20 {
+		barWidth = 20
+	}
+	if barWidth > 60 {
+		barWidth = 60
+	}
+
+	// Animation position (0.0 to 1.0)
+	animPos := float64(m.animTick%PropagationAnimPeriod) / float64(PropagationAnimPeriod)
+
+	// Render uplink bar (Earth → Spacecraft, dot moves left to right)
+	b.WriteString("  ")
+	b.WriteString(earthStyle.Render("Earth"))
+	b.WriteString(" ")
+	b.WriteString(dimStyle.Render("["))
+	b.WriteString(renderPulseBar(barWidth, animPos, true, upPulseStyle, dimStyle))
+	b.WriteString(dimStyle.Render("]"))
+	b.WriteString(" ")
+	b.WriteString(scStyle.Render("SC"))
+	b.WriteString(labelStyle.Render("  ↑ cmd"))
+	b.WriteString("\n")
+
+	// Render downlink bar (Spacecraft → Earth, dot moves right to left)
+	// Offset downlink animation by half period for visual interest
+	downPos := animPos + 0.5
+	if downPos >= 1.0 {
+		downPos -= 1.0
+	}
+	b.WriteString("  ")
+	b.WriteString(earthStyle.Render("Earth"))
+	b.WriteString(" ")
+	b.WriteString(dimStyle.Render("["))
+	b.WriteString(renderPulseBar(barWidth, downPos, false, downPulseStyle, dimStyle))
+	b.WriteString(dimStyle.Render("]"))
+	b.WriteString(" ")
+	b.WriteString(scStyle.Render("SC"))
+	b.WriteString(labelStyle.Render("  ↓ tlm"))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+// renderPulseBar renders an ASCII bar with a moving pulse dot.
+// If leftToRight is true, the dot moves from left to right; otherwise right to left.
+func renderPulseBar(width int, pos float64, leftToRight bool, pulseStyle, dimStyle lipgloss.Style) string {
+	if width <= 0 {
+		return ""
+	}
+
+	// Calculate dot position
+	dotPos := int(pos * float64(width))
+	if !leftToRight {
+		dotPos = width - 1 - dotPos
+	}
+
+	// Clamp dot position
+	if dotPos < 0 {
+		dotPos = 0
+	}
+	if dotPos >= width {
+		dotPos = width - 1
+	}
+
+	var b strings.Builder
+	for i := 0; i < width; i++ {
+		if i == dotPos {
+			b.WriteString(pulseStyle.Render("●"))
+		} else if i == dotPos-1 || i == dotPos+1 {
+			// Subtle trail/lead effect
+			b.WriteString(dimStyle.Render("·"))
+		} else {
+			b.WriteString(dimStyle.Render("─"))
+		}
+	}
+
+	return b.String()
+}
+
+// formatLightTime formats a duration as mm:ss or hh:mm:ss for light time display.
+func formatLightTime(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+
+	totalSec := int(d.Seconds())
+	hours := totalSec / 3600
+	mins := (totalSec % 3600) / 60
+	secs := totalSec % 60
+
+	if hours > 0 {
+		return fmt.Sprintf("%d:%02d:%02d", hours, mins, secs)
+	}
+	return fmt.Sprintf("%02d:%02d", mins, secs)
 }

@@ -2,9 +2,10 @@
 package version
 
 // Version is the current application version.
-const Version = "0.7.3"
+const Version = "0.8.0"
 
 // Milestones:
+// 0.8.0 - Signal propagation delay visualizer, ephemeris range/light-time fallback via Horizons
 // 0.7.3 - Fix orbit trace mismatch when rapidly switching focused spacecraft
 // 0.7.2 - Fix Mission tab spacecraft selection, fix "pass in now" grammar
 // 0.7.1 - Only shimmer update result, not "checking" state
