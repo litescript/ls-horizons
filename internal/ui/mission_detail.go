@@ -310,37 +310,30 @@ func (m MissionDetailModel) renderSpacecraftDetails(sc *dsn.Spacecraft) string {
 	b.WriteString(valueStyle.Render(fmt.Sprintf("%d", len(sc.Links))))
 	b.WriteString("\n\n")
 
-	// Link details
+	// Link details (compact: 2 lines per link)
 	if len(sc.Links) > 0 {
 		b.WriteString(headerStyle.Render("Link Details"))
 		b.WriteString("\n")
 
+		compactLabel := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244"))
+
 		for i, link := range sc.Links {
 			b.WriteString(fmt.Sprintf("\n  Link %d: %s @ %s\n", i+1, link.AntennaID, link.Complex))
-
 			b.WriteString("    ")
-			b.WriteString(labelStyle.Render("Band:"))
+			b.WriteString(compactLabel.Render("Band: "))
 			b.WriteString(valueStyle.Render(link.Band))
-			b.WriteString("\n")
-
-			b.WriteString("    ")
-			b.WriteString(labelStyle.Render("RTLT:"))
+			b.WriteString("  ")
+			b.WriteString(compactLabel.Render("RTLT: "))
 			b.WriteString(valueStyle.Render(dsn.FormatRTLT(link.RTLT)))
-			b.WriteString("\n")
-
-			b.WriteString("    ")
-			b.WriteString(labelStyle.Render("Down Rate:"))
+			b.WriteString("  ")
+			b.WriteString(compactLabel.Render("Down: "))
 			b.WriteString(valueStyle.Render(dsn.FormatDataRate(link.DownRate)))
-			b.WriteString("\n")
-
-			b.WriteString("    ")
-			b.WriteString(labelStyle.Render("Up Rate:"))
+			b.WriteString("  ")
+			b.WriteString(compactLabel.Render("Up: "))
 			b.WriteString(valueStyle.Render(dsn.FormatDataRate(link.UpRate)))
-			b.WriteString("\n")
-
-			// Doppler modeling (based on carrier frequency)
-			b.WriteString("    ")
-			b.WriteString(labelStyle.Render("Doppler:"))
+			b.WriteString("  ")
+			b.WriteString(compactLabel.Render("Doppler: "))
 			b.WriteString(valueStyle.Render(m.renderDopplerInfo(link.Band, sc.Distance)))
 			b.WriteString("\n")
 		}
