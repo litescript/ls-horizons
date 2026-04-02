@@ -32,7 +32,7 @@ type MissionProfile struct {
 	Aliases     []string // Name/code match keys (e.g., "EM2", "ORION")
 	Crewed      bool
 	Crew        []string // Crew member names (empty for robotic missions)
-	PrimaryBody string // E.g., "Moon"
+	PrimaryBody string   // E.g., "Moon"
 	Accent      MissionAccent
 	StartTime   time.Time
 	EndTime     time.Time
@@ -74,7 +74,7 @@ type TimelineItem struct {
 type TimelineStatus int
 
 const (
-	TimelinePast    TimelineStatus = iota
+	TimelinePast TimelineStatus = iota
 	TimelineCurrent
 	TimelineFuture
 )

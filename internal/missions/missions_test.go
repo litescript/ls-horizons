@@ -19,7 +19,7 @@ func TestResolveProfile(t *testing.T) {
 		{"ARTEMIS II", "artemis-ii"},
 		{"ARTEMIS2", "artemis-ii"},
 		{"JWST", ""},
-		{"ARTEMIS", ""},  // bare "ARTEMIS" excluded: collides with lunar ARTEMIS-P1/P2
+		{"ARTEMIS", ""}, // bare "ARTEMIS" excluded: collides with lunar ARTEMIS-P1/P2
 		{"", ""},
 		{"   ", ""},
 	}
