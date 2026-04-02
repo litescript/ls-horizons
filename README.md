@@ -4,7 +4,7 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 
 > **Note:** This project is under active development. Features may change and bugs are expected.
 
-![Dashboard View](docs/screenshots/dashboard.png)
+![Dashboard View](docs/screenshots/dashboard.png?v=0.9.0)
 
 ## Features
 
@@ -33,22 +33,22 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 ### Dashboard View
 Real-time status of all three DSN complexes with active spacecraft table showing antennas, bands, data rates, distances, and struggle indicators.
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard](docs/screenshots/dashboard.png?v=0.9.0)
 
 ### Mission Detail View
 Deep dive into individual spacecraft with link details, pass schedules, elevation sparkline, and signal propagation visualizer showing light-time delay with animated pulse. Press `Enter` from Dashboard to jump directly here. Curated missions (like Artemis II) show a spotlight panel with phase, countdown, crew, and timeline rail — clearly labeled as schedule-derived data.
 
-![Mission Detail](docs/screenshots/mission.png)
+![Mission Detail](docs/screenshots/mission.png?v=0.9.0)
 
 ### Sky View
 Animated celestial view with real star positions, spacecraft locations, and trajectory path arcs. Smooth camera transitions when cycling between spacecraft.
 
-![Sky View](docs/screenshots/sky-view.png)
+![Sky View](docs/screenshots/sky-view.png?v=0.9.0)
 
 ### Orbit View
 Solar system visualization showing planets at real positions (via JPL Horizons) and active spacecraft with their trajectories. Toggle star background with `t`.
 
-![Orbit View](docs/screenshots/orbit-view.png)
+![Orbit View](docs/screenshots/orbit-view.png?v=0.9.0)
 
 ## Installation
 
