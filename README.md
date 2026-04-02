@@ -4,7 +4,7 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 
 > **Note:** This project is under active development. Features may change and bugs are expected.
 
-![Dashboard View](docs/screenshots/dashboard.png?v=0.9.0)
+![ls-horizons demo](demo.gif)
 
 ## Features
 
