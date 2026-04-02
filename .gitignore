@@ -34,6 +34,9 @@ Thumbs.db
 .env
 .env.local
 
+# Demo recordings
+*.cast
+
 # Archives
 *.tar.*
 *.gz
