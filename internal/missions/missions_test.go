@@ -16,10 +16,10 @@ func TestResolveProfile(t *testing.T) {
 		{"em2", "artemis-ii"},
 		{"  EM2  ", "artemis-ii"},
 		{"ORION", "artemis-ii"},
-		{"ARTEMIS", "artemis-ii"},
 		{"ARTEMIS II", "artemis-ii"},
 		{"ARTEMIS2", "artemis-ii"},
 		{"JWST", ""},
+		{"ARTEMIS", ""},  // bare "ARTEMIS" excluded: collides with lunar ARTEMIS-P1/P2
 		{"", ""},
 		{"   ", ""},
 	}
@@ -206,6 +206,44 @@ func TestTimelineAllPast_AfterComplete(t *testing.T) {
 	}
 }
 
+func TestSpotlightProvenance(t *testing.T) {
+	sc := &dsn.Spacecraft{ID: 1, Name: "EM2"}
+	st := BuildSpotlightState(time.Now(), sc)
+	if st == nil {
+		t.Fatal("expected non-nil state")
+	}
+	if st.Provenance != ProvenanceCurated {
+		t.Errorf("provenance = %d, want ProvenanceCurated", st.Provenance)
+	}
+
+	// Voyager 1 should also be curated
+	sc2 := &dsn.Spacecraft{ID: 31, Name: "VGR1"}
+	st2 := BuildSpotlightState(time.Now(), sc2)
+	if st2 == nil {
+		t.Fatal("expected non-nil state for VGR1")
+	}
+	if st2.Provenance != ProvenanceCurated {
+		t.Errorf("VGR1 provenance = %d, want ProvenanceCurated", st2.Provenance)
+	}
+}
+
+func TestProvenanceLabel(t *testing.T) {
+	tests := []struct {
+		p    DataProvenance
+		want string
+	}{
+		{ProvenanceCurated, "curated mission timeline"},
+		{ProvenanceLive, "live telemetry"},
+		{ProvenanceUnavailable, ""},
+	}
+	for _, tt := range tests {
+		got := ProvenanceLabel(tt.p)
+		if got != tt.want {
+			t.Errorf("ProvenanceLabel(%d) = %q, want %q", tt.p, got, tt.want)
+		}
+	}
+}
+
 func TestFormatCountdown(t *testing.T) {
 	tests := []struct {
 		d    time.Duration
@@ -244,24 +282,88 @@ func TestCrewBadge(t *testing.T) {
 
 func TestCatalogNotEmpty(t *testing.T) {
 	c := Catalog()
-	if len(c) == 0 {
-		t.Error("catalog should not be empty")
+	if len(c) < 2 {
+		t.Fatalf("catalog should have at least 2 profiles, got %d", len(c))
 	}
+
 	// Verify Artemis II profile integrity
 	p := c[0]
 	if p.ID != "artemis-ii" {
 		t.Errorf("first profile ID = %q, want artemis-ii", p.ID)
 	}
 	if len(p.Events) != 6 {
-		t.Errorf("events = %d, want 6", len(p.Events))
+		t.Errorf("artemis events = %d, want 6", len(p.Events))
 	}
 	if len(p.Phases) != 7 {
-		t.Errorf("phases = %d, want 7", len(p.Phases))
+		t.Errorf("artemis phases = %d, want 7", len(p.Phases))
 	}
 	if !p.Crewed {
 		t.Error("Artemis II should be crewed")
 	}
+	if len(p.Crew) != 4 {
+		t.Errorf("artemis crew = %d, want 4", len(p.Crew))
+	}
 	if p.PrimaryBody != "Moon" {
 		t.Errorf("primary body = %q, want Moon", p.PrimaryBody)
+	}
+
+	// Verify Voyager 1 profile integrity
+	v := c[1]
+	if v.ID != "voyager-1" {
+		t.Errorf("second profile ID = %q, want voyager-1", v.ID)
+	}
+	if len(v.Events) != 6 {
+		t.Errorf("voyager events = %d, want 6", len(v.Events))
+	}
+	if v.Crewed {
+		t.Error("Voyager 1 should not be crewed")
+	}
+	if len(v.Crew) != 0 {
+		t.Error("Voyager 1 should have empty crew")
+	}
+}
+
+func TestVoyager1Spotlight(t *testing.T) {
+	sc := &dsn.Spacecraft{ID: 31, Name: "VGR1"}
+	st := BuildSpotlightState(time.Now(), sc)
+
+	if st == nil {
+		t.Fatal("expected non-nil state for VGR1")
+	}
+	if st.Profile.ID != "voyager-1" {
+		t.Errorf("profile = %q, want voyager-1", st.Profile.ID)
+	}
+	if st.CurrentPhase != "Interstellar" {
+		t.Errorf("phase = %q, want Interstellar", st.CurrentPhase)
+	}
+	if st.IsPreLaunch {
+		t.Error("Voyager 1 should not be pre-launch")
+	}
+	if st.IsComplete {
+		t.Error("Voyager 1 should not be complete yet")
+	}
+	// MET should be ~48 years
+	if st.MET < 47*365*24*time.Hour {
+		t.Errorf("MET = %v, expected ~48 years", st.MET)
+	}
+}
+
+func TestNoAliasCrossTalk(t *testing.T) {
+	// VGR1 should only match Voyager 1, not Artemis II
+	p := ResolveProfile("VGR1")
+	if p == nil || p.ID != "voyager-1" {
+		t.Error("VGR1 should resolve to voyager-1")
+	}
+
+	// EM2 should only match Artemis II, not Voyager 1
+	p = ResolveProfile("EM2")
+	if p == nil || p.ID != "artemis-ii" {
+		t.Error("EM2 should resolve to artemis-ii")
+	}
+
+	// VOYAGER (bare) should NOT match — too ambiguous
+	p = ResolveProfile("VOYAGER")
+	if p != nil {
+		t.Errorf("bare VOYAGER should not match, got %q", p.ID)
 	}
 }

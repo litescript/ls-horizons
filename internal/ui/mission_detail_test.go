@@ -450,3 +450,98 @@ func TestSparklineBlocks(t *testing.T) {
 		}
 	}
 }
+
+func TestCuratedMissionRenderNoPanic(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func() MissionDetailModel
+	}{
+		{
+			name: "curated mission with elevation error",
+			setup: func() MissionDetailModel {
+				m := NewMissionDetailModel()
+				m = m.SetSize(80, 24)
+				m = m.UpdateData(state.Snapshot{
+					Spacecraft: []dsn.Spacecraft{
+						{ID: 1, Name: "EM2", Distance: 10000},
+					},
+					ElevationTraceError: errors.New("unknown spacecraft: EM2"),
+				})
+				return m
+			},
+		},
+		{
+			name: "curated mission with pass plan error",
+			setup: func() MissionDetailModel {
+				m := NewMissionDetailModel()
+				m = m.SetSize(80, 24)
+				m = m.UpdateData(state.Snapshot{
+					Spacecraft: []dsn.Spacecraft{
+						{ID: 1, Name: "EM2", Distance: 10000},
+					},
+					PassPlanError: errors.New("unknown spacecraft: EM2"),
+				})
+				return m
+			},
+		},
+		{
+			name: "curated mission narrow terminal",
+			setup: func() MissionDetailModel {
+				m := NewMissionDetailModel()
+				m = m.SetSize(40, 20)
+				m = m.UpdateData(state.Snapshot{
+					Spacecraft: []dsn.Spacecraft{
+						{ID: 1, Name: "EM2", Distance: 10000},
+					},
+				})
+				return m
+			},
+		},
+		{
+			name: "non-curated mission with elevation error shows raw error",
+			setup: func() MissionDetailModel {
+				m := NewMissionDetailModel()
+				m = m.SetSize(80, 24)
+				m = m.UpdateData(state.Snapshot{
+					Spacecraft: []dsn.Spacecraft{
+						{ID: 1, Name: "JWST", Distance: 1500000},
+					},
+					ElevationTraceError: errors.New("timeout"),
+				})
+				return m
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := tt.setup()
+			output := m.View()
+			if output == "" {
+				t.Error("View() returned empty string")
+			}
+		})
+	}
+}
+
+func TestSelectedSpacecraftIsCurated(t *testing.T) {
+	m := NewMissionDetailModel()
+	m = m.UpdateData(state.Snapshot{
+		Spacecraft: []dsn.Spacecraft{
+			{ID: 1, Name: "EM2"},
+			{ID: 2, Name: "JWST"},
+		},
+	})
+
+	// EM2 is curated (Artemis II profile)
+	m.SetSelectedSpacecraft(1)
+	if !m.selectedSpacecraftIsCurated() {
+		t.Error("EM2 should be identified as curated")
+	}
+
+	// JWST has no curated profile
+	m.SetSelectedSpacecraft(2)
+	if m.selectedSpacecraftIsCurated() {
+		t.Error("JWST should not be identified as curated")
+	}
+}

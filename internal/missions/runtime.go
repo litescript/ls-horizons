@@ -22,6 +22,7 @@ func BuildSpotlightState(now time.Time, sc *dsn.Spacecraft) *SpotlightState {
 		Profile:     profile,
 		IsPreLaunch: now.Before(profile.StartTime),
 		IsComplete:  now.After(profile.EndTime),
+		Provenance:  ProvenanceCurated,
 	}
 
 	// Compute current phase

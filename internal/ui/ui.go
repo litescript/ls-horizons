@@ -510,7 +510,7 @@ func (m Model) renderLogo() string {
 	b.WriteString("\n")
 
 	// Version/copyright line with dynamic update status
-	baseInfo := fmt.Sprintf("  (c) 2025 litescript.net | v%s | ", version.Version)
+	baseInfo := fmt.Sprintf("  (c) 2026 litescript.net | v%s | ", version.Version)
 	b.WriteString(muted.Render(baseInfo))
 	if m.statusMsg != "" {
 		if m.statusMsgShimmer {

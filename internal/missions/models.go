@@ -31,6 +31,7 @@ type MissionProfile struct {
 	HeroText    string
 	Aliases     []string // Name/code match keys (e.g., "EM2", "ORION")
 	Crewed      bool
+	Crew        []string // Crew member names (empty for robotic missions)
 	PrimaryBody string // E.g., "Moon"
 	Accent      MissionAccent
 	StartTime   time.Time
@@ -38,6 +39,15 @@ type MissionProfile struct {
 	Events      []MissionEvent
 	Phases      []MissionPhase
 }
+
+// DataProvenance indicates the source of a data field.
+type DataProvenance int
+
+const (
+	ProvenanceCurated     DataProvenance = iota // Derived from curated mission schedule
+	ProvenanceLive                              // From real-time DSN or ephemeris data
+	ProvenanceUnavailable                       // Not available from any source
+)
 
 // SpotlightState is the computed runtime state for rendering a mission spotlight.
 type SpotlightState struct {
@@ -49,6 +59,7 @@ type SpotlightState struct {
 	Timeline     []TimelineItem
 	IsPreLaunch  bool
 	IsComplete   bool
+	Provenance   DataProvenance // Source of phase/MET/countdown/timeline data
 }
 
 // TimelineItem is a compact entry for the timeline rail.

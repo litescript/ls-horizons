@@ -43,3 +43,15 @@ func CrewBadge(crewed bool) string {
 	}
 	return ""
 }
+
+// ProvenanceLabel returns a compact human-readable label for a data provenance.
+func ProvenanceLabel(p DataProvenance) string {
+	switch p {
+	case ProvenanceCurated:
+		return "curated mission timeline"
+	case ProvenanceLive:
+		return "live telemetry"
+	default:
+		return ""
+	}
+}

@@ -15,11 +15,12 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 - **Astronomical projection** — Proper RA/Dec to Az/El conversion using GMST/LST calculations
 - **JPL Horizons integration** — Trajectory path arcs and geocentric RA/Dec for pass planning
 - **Signal propagation visualizer** — Animated light-time display showing one-way/round-trip delay with pulse animation
+- **Mission Spotlight** — Curated mission profiles with live phase tracking, MET countdown, crew info, and timeline rail (Artemis II, Voyager 1)
 - **Four view modes**:
-  - **Dashboard** — Complex status and active spacecraft table with multi-antenna tracking
-  - **Mission Detail** — Per-spacecraft deep dive with pass schedules, link details, and propagation delay
+  - **Dashboard** — Complex status and active spacecraft table with multi-antenna tracking and mission spotlight badges
+  - **Mission Detail** — Per-spacecraft deep dive with pass schedules, link details, propagation delay, and mission spotlight panel
   - **Sky View** — Animated star field with spacecraft positions and smooth camera transitions
-  - **Orbit View** — Solar system visualization with real planet positions and spacecraft trajectories
+  - **Orbit View** — Solar system visualization with real planet positions, spacecraft trajectories, and mission-aware HUD
 - **Derived metrics**:
   - Distance calculated from round-trip light time (RTLT), with JPL Horizons fallback
   - Velocity estimation from RTLT delta
@@ -35,7 +36,7 @@ Real-time status of all three DSN complexes with active spacecraft table showing
 ![Dashboard](docs/screenshots/dashboard.png)
 
 ### Mission Detail View
-Deep dive into individual spacecraft with link details, pass schedules, elevation sparkline, and signal propagation visualizer showing light-time delay with animated pulse. Press `Enter` from Dashboard to jump directly here.
+Deep dive into individual spacecraft with link details, pass schedules, elevation sparkline, and signal propagation visualizer showing light-time delay with animated pulse. Press `Enter` from Dashboard to jump directly here. Curated missions (like Artemis II) show a spotlight panel with phase, countdown, crew, and timeline rail — clearly labeled as schedule-derived data.
 
 ![Mission Detail](docs/screenshots/mission.png)
 
@@ -247,12 +248,18 @@ internal/
 │   └── targets.go      NAIF SPICE ID mappings (45+ spacecraft)
 ├── state/
 │   └── state.go        Thread-safe state with pass plan and elevation trace caching
+├── missions/           Mission spotlight layer
+│   ├── models.go       MissionProfile, SpotlightState, DataProvenance
+│   ├── catalog.go      Curated profiles (Artemis II, Voyager 1)
+│   ├── aliases.go      Spacecraft name/code resolution
+│   ├── runtime.go      Live phase/MET/countdown computation
+│   └── viewmodel.go    Display formatting helpers
 ├── ui/
 │   ├── ui.go           Bubble Tea main model with request queue
-│   ├── dashboard.go    Dashboard view with Enter→Mission flow
-│   ├── mission_detail.go  Mission view with pass panel and elevation sparkline
+│   ├── dashboard.go    Dashboard view with Enter→Mission flow and spotlight badges
+│   ├── mission_detail.go  Mission view with pass panel, elevation sparkline, and spotlight
 │   ├── sky_view.go     Sky projection with braille arc rendering
-│   └── solarsystem_view.go  Orbit view with ecliptic projection
+│   └── solarsystem_view.go  Orbit view with ecliptic projection and mission HUD
 ├── logging/
 │   └── logging.go      Structured logging
 └── version/
@@ -265,6 +272,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.9.0** — Mission Spotlight: curated Artemis II & Voyager 1 profiles with live phase/MET/countdown, crew display, timeline rail, data provenance labels, and graceful handling of unsupported ephemeris lookups
 - **0.8.0** — Signal propagation delay visualizer, ephemeris range/light-time fallback via Horizons
 - **0.7.3** — Fix orbit trace mismatch when rapidly switching focused spacecraft
 - **0.7.2** — Fix Mission tab spacecraft selection, fix "pass in now" grammar

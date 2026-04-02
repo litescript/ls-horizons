@@ -25,6 +25,10 @@ type MissionDetailModel struct {
 	passPlan      *dsn.PassPlan
 	animTick      int // Animation tick for shimmer effects
 
+	// Spotlight phase tracking (for transient highlight on phase change)
+	spotlightPhase     string // Last observed phase name
+	spotlightHighlight int    // Ticks remaining for phase-change highlight
+
 	// Ephemeris estimate cache (for range/light-time when DSN data unavailable)
 	ephemPoint      ephem.EphemerisPoint
 	ephemForID      int         // Spacecraft ID this estimate is for
@@ -52,9 +56,32 @@ func (m MissionDetailModel) SetSize(width, height int) MissionDetailModel {
 	return m
 }
 
-// SetAnimTick updates the animation tick for shimmer effects.
+// SpotlightHighlightTicks is how many animation ticks (80ms each) a phase-change
+// highlight lasts. 25 ticks ≈ 2 seconds.
+const SpotlightHighlightTicks = 25
+
+// SetAnimTick updates the animation tick for shimmer effects and spotlight tracking.
 func (m MissionDetailModel) SetAnimTick(tick int) MissionDetailModel {
 	m.animTick = tick
+
+	// Decrement spotlight highlight counter
+	if m.spotlightHighlight > 0 {
+		m.spotlightHighlight--
+	}
+
+	// Track phase changes for the selected spacecraft
+	for i := range m.snapshot.Spacecraft {
+		if m.snapshot.Spacecraft[i].ID == m.selectedID {
+			if st := missions.BuildSpotlightState(time.Now(), &m.snapshot.Spacecraft[i]); st != nil {
+				if m.spotlightPhase != "" && st.CurrentPhase != m.spotlightPhase {
+					m.spotlightHighlight = SpotlightHighlightTicks
+				}
+				m.spotlightPhase = st.CurrentPhase
+			}
+			break
+		}
+	}
+
 	return m
 }
 
@@ -275,6 +302,10 @@ func (m MissionDetailModel) renderMissionSpotlight(sc *dsn.Spacecraft) string {
 
 	var b strings.Builder
 	p := st.Profile
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
 
 	accentStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -292,43 +323,110 @@ func (m MissionDetailModel) renderMissionSpotlight(sc *dsn.Spacecraft) string {
 	valueStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("252"))
 
-	// Header line: mission name + crew badge
-	header := p.DisplayName
+	// ── Header bar: ━━ MISSION NAME ★ ━━━━━━━━━━━━━━━━
+	headerText := " " + p.DisplayName + " "
 	if p.Crewed {
-		header += " " + missions.CrewBadge(true)
+		headerText += missions.CrewBadge(true) + " "
 	}
-	b.WriteString(accentStyle.Render(header))
-	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render(p.Subtitle))
-	b.WriteString("\n")
-	b.WriteString(dimAccent.Render(p.HeroText))
+	barRemain := w - len(headerText) - 4
+	if barRemain < 2 {
+		barRemain = 2
+	}
+	bar := "━━" + headerText + strings.Repeat("━", barRemain)
+	b.WriteString(accentStyle.Render(bar))
 	b.WriteString("\n")
 
-	// Phase + timing line
-	b.WriteString(labelStyle.Render("Phase: "))
-	b.WriteString(valueStyle.Render(st.CurrentPhase))
+	// ── Subtitle
+	b.WriteString("  ")
+	b.WriteString(subtitleStyle.Render(truncate(p.Subtitle, w-4)))
+	b.WriteString("\n")
 
-	if st.NextEvent != nil {
-		b.WriteString("    ")
-		b.WriteString(labelStyle.Render("Next: "))
-		b.WriteString(valueStyle.Render(st.NextEvent.Name))
+	// ── Crew (if present and terminal wide enough)
+	if len(p.Crew) > 0 && w >= 50 {
+		crewStr := "Crew: " + strings.Join(p.Crew, " \u00b7 ")
 		b.WriteString("  ")
-		b.WriteString(accentStyle.Render(missions.FormatCountdown(st.Countdown)))
+		b.WriteString(dimAccent.Render(truncate(crewStr, w-4)))
+		b.WriteString("\n")
+	}
+
+	// ── Hero text (only if wide enough)
+	if p.HeroText != "" && w >= 70 {
+		b.WriteString("  ")
+		b.WriteString(dimAccent.Render(truncate(p.HeroText, w-4)))
+		b.WriteString("\n")
+	}
+
+	// ── Phase line with optional highlight on phase change
+	phaseStyle := valueStyle
+	if m.spotlightHighlight > 0 {
+		// Fade from bright accent to normal over the highlight period
+		if m.spotlightHighlight > SpotlightHighlightTicks/2 {
+			phaseStyle = accentStyle
+		} else {
+			phaseStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color(p.Accent.Primary))
+		}
+	}
+
+	b.WriteString("  ")
+	b.WriteString(labelStyle.Render("Phase: "))
+	b.WriteString(phaseStyle.Render(st.CurrentPhase))
+
+	// MET or countdown on same line (right side)
+	if !st.IsPreLaunch && !st.IsComplete {
+		b.WriteString("  ")
+		b.WriteString(dimAccent.Render(missions.FormatMET(st.MET)))
 	} else if st.IsComplete {
-		b.WriteString("    ")
+		b.WriteString("  ")
 		b.WriteString(dimAccent.Render(missions.FormatMET(st.MET)))
 	}
 	b.WriteString("\n")
 
-	// Compact timeline rail
-	b.WriteString(m.renderTimelineRail(st))
+	// ── Next event line with countdown threshold coloring
+	if st.NextEvent != nil {
+		countdownStyle := m.countdownStyle(st.Countdown, p)
+		b.WriteString("  ")
+		b.WriteString(labelStyle.Render("Next:  "))
+		b.WriteString(valueStyle.Render(st.NextEvent.Name))
+		b.WriteString("  ")
+		b.WriteString(countdownStyle.Render(missions.FormatCountdown(st.Countdown)))
+		b.WriteString("\n")
+	}
+
+	// ── Timeline rail
+	b.WriteString("  ")
+	b.WriteString(m.renderTimelineRail(st, w-4))
 	b.WriteString("\n")
+
+	// ── Provenance indicator
+	if st.Provenance == missions.ProvenanceCurated {
+		provenanceStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("239")).
+			Italic(true)
+		b.WriteString("  ")
+		b.WriteString(provenanceStyle.Render(missions.ProvenanceLabel(st.Provenance)))
+		b.WriteString("\n")
+	}
 
 	return b.String()
 }
 
+// countdownStyle returns a style for the countdown based on threshold proximity.
+func (m MissionDetailModel) countdownStyle(d time.Duration, p *missions.MissionProfile) lipgloss.Style {
+	switch {
+	case d < 10*time.Minute:
+		return lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Accent.Primary))
+	case d < time.Hour:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent.Primary))
+	case d < 24*time.Hour:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent.Secondary))
+	default:
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent.Dim))
+	}
+}
+
 // renderTimelineRail renders a compact horizontal timeline of mission events.
-func (m MissionDetailModel) renderTimelineRail(st *missions.SpotlightState) string {
+func (m MissionDetailModel) renderTimelineRail(st *missions.SpotlightState, maxWidth int) string {
 	if len(st.Timeline) == 0 {
 		return ""
 	}
@@ -337,12 +435,18 @@ func (m MissionDetailModel) renderTimelineRail(st *missions.SpotlightState) stri
 	pastStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent.Dim))
 	currentStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Accent.Primary))
 	futureStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	connDim := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+	connPast := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent.Dim))
+	connFuture := lipgloss.NewStyle().Foreground(lipgloss.Color("236"))
 
 	var b strings.Builder
 	for i, item := range st.Timeline {
 		if i > 0 {
-			b.WriteString(connDim.Render(" \u203a "))
+			// Connector style matches the segment we're entering
+			conn := connFuture
+			if item.Status != missions.TimelineFuture {
+				conn = connPast
+			}
+			b.WriteString(conn.Render(" \u2500\u2500 "))
 		}
 
 		var glyph string
@@ -359,10 +463,27 @@ func (m MissionDetailModel) renderTimelineRail(st *missions.SpotlightState) stri
 			style = futureStyle
 		}
 
-		b.WriteString(style.Render(glyph + " " + item.Key))
+		key := item.Key
+		// Abbreviate keys for narrow terminals
+		if maxWidth < 60 && len(key) > 3 {
+			key = key[:3]
+		}
+
+		b.WriteString(style.Render(glyph + " " + key))
 	}
 
 	return b.String()
+}
+
+// truncate shortens a string to maxLen, appending "..." if truncated.
+func truncate(s string, maxLen int) string {
+	if maxLen < 4 {
+		maxLen = 4
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
 }
 
 func (m MissionDetailModel) renderSpacecraftDetails(sc *dsn.Spacecraft) string {
@@ -497,6 +618,9 @@ func (m MissionDetailModel) renderElevationSparkline() string {
 
 	if m.snapshot.ElevationTraceError != nil {
 		dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+		if m.selectedSpacecraftIsCurated() {
+			return dimStyle.Render("Elevation data not available for this mission profile")
+		}
 		return dimStyle.Render("Error: " + m.snapshot.ElevationTraceError.Error())
 	}
 
@@ -657,6 +781,17 @@ func (m MissionDetailModel) SelectedSpacecraftID() int {
 	return m.selectedID
 }
 
+// selectedSpacecraftIsCurated returns true if the currently selected spacecraft
+// has a curated mission profile, indicating it may not have full ephemeris support.
+func (m MissionDetailModel) selectedSpacecraftIsCurated() bool {
+	for _, sc := range m.snapshot.Spacecraft {
+		if sc.ID == m.selectedID {
+			return missions.HasSpotlight(sc.Name)
+		}
+	}
+	return false
+}
+
 // SetSelectedSpacecraft sets the selected spacecraft by ID.
 func (m *MissionDetailModel) SetSelectedSpacecraft(id int) {
 	m.selectedID = id
@@ -762,12 +897,16 @@ func (m MissionDetailModel) renderPassPanel() string {
 	passPlan := m.snapshot.PassPlan
 	if passPlan == nil || len(passPlan.Passes) == 0 {
 		if m.snapshot.PassPlanError != nil {
-			errStr := m.snapshot.PassPlanError.Error()
 			var msg string
-			if strings.Contains(errStr, "unknown spacecraft") {
-				msg = "  Ephemeris data not available for this mission"
+			if m.selectedSpacecraftIsCurated() {
+				msg = "  Pass predictions not available for this mission profile"
 			} else {
-				msg = fmt.Sprintf("  %v", m.snapshot.PassPlanError)
+				errStr := m.snapshot.PassPlanError.Error()
+				if strings.Contains(errStr, "unknown spacecraft") {
+					msg = "  Ephemeris data not available for this mission"
+				} else {
+					msg = fmt.Sprintf("  %v", m.snapshot.PassPlanError)
+				}
 			}
 			b.WriteString(dimStyle.Render(msg))
 		} else if m.snapshot.PassPlanLoading {

@@ -639,6 +639,9 @@ func (m SolarSystemModel) renderHUD() string {
 				if st != nil {
 					b.WriteString(dimStyle.Render(" · "))
 					b.WriteString(valueStyle.Render(st.CurrentPhase))
+					if st.Provenance == missions.ProvenanceCurated {
+						b.WriteString(dimStyle.Render(" (sched)"))
+					}
 				}
 				b.WriteString("  ")
 			}
