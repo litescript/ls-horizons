@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/litescript/ls-horizons/internal/astro"
 	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/missions"
 	"github.com/litescript/ls-horizons/internal/state"
 )
 
@@ -619,7 +621,7 @@ func (m SolarSystemModel) renderHUD() string {
 	}
 	b.WriteString("\n")
 
-	// Second line: coordinates + scale info
+	// Second line: coordinates + mission context
 	if focused != nil {
 		b.WriteString(labelStyle.Render("Ecl Lon:"))
 		b.WriteString(valueStyle.Render(fmt.Sprintf("%.1f°", focused.EclipticLonDeg())))
@@ -627,6 +629,20 @@ func (m SolarSystemModel) renderHUD() string {
 		b.WriteString(labelStyle.Render("Ecl Lat:"))
 		b.WriteString(valueStyle.Render(fmt.Sprintf("%.1f°", focused.EclipticLatDeg())))
 		b.WriteString("  ")
+
+		// Mission-aware annotation for spotlighted spacecraft
+		if focused.Kind == dsn.BodySpacecraft {
+			if profile := missions.ResolveProfile(focused.Code); profile != nil {
+				missionStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(profile.Accent.Primary))
+				b.WriteString(missionStyle.Render("│ " + profile.DisplayName))
+				st := missions.BuildSpotlightState(time.Now(), &dsn.Spacecraft{Name: focused.Code})
+				if st != nil {
+					b.WriteString(dimStyle.Render(" · "))
+					b.WriteString(valueStyle.Render(st.CurrentPhase))
+				}
+				b.WriteString("  ")
+			}
+		}
 	}
 
 	// Scale mode indicator

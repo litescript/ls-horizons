@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/litescript/ls-horizons/internal/dsn"
+	"github.com/litescript/ls-horizons/internal/missions"
 	"github.com/litescript/ls-horizons/internal/state"
 )
 
@@ -450,10 +451,17 @@ func (m DashboardModel) renderSpacecraftHeader(sc dsn.SpacecraftView, selected b
 		line = sc.Code
 	}
 
-	if selected {
-		return selectedRowStyle.Render("▶ " + line)
+	// Spotlight badge for missions with curated profiles
+	badge := ""
+	if missions.HasSpotlight(sc.Code) {
+		badgeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#e06020"))
+		badge = " " + badgeStyle.Render("◈")
 	}
-	return missionStyle.Render("  " + line)
+
+	if selected {
+		return selectedRowStyle.Render("▶ "+line) + badge
+	}
+	return missionStyle.Render("  "+line) + badge
 }
 
 // renderLinkDetail renders a single antenna link line.

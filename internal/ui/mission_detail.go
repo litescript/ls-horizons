@@ -10,6 +10,7 @@ import (
 
 	"github.com/litescript/ls-horizons/internal/dsn"
 	"github.com/litescript/ls-horizons/internal/ephem"
+	"github.com/litescript/ls-horizons/internal/missions"
 	"github.com/litescript/ls-horizons/internal/state"
 )
 
@@ -203,7 +204,13 @@ func (m MissionDetailModel) View() string {
 		return b.String()
 	}
 
-	// Spacecraft details first
+	// Mission spotlight (if this spacecraft has a curated profile)
+	if spotlight := m.renderMissionSpotlight(selected); spotlight != "" {
+		b.WriteString(spotlight)
+		b.WriteString("\n")
+	}
+
+	// Spacecraft details
 	b.WriteString(m.renderSpacecraftDetails(selected))
 
 	// Propagation delay visualizer
@@ -254,6 +261,106 @@ func (m MissionDetailModel) renderSpacecraftSelector() string {
 	}
 
 	b.WriteString("→")
+
+	return b.String()
+}
+
+// renderMissionSpotlight renders the mission spotlight panel for a spacecraft
+// with a curated mission profile. Returns "" if no profile matches.
+func (m MissionDetailModel) renderMissionSpotlight(sc *dsn.Spacecraft) string {
+	st := missions.BuildSpotlightState(time.Now(), sc)
+	if st == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	p := st.Profile
+
+	accentStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color(p.Accent.Primary))
+
+	subtitleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(p.Accent.Secondary))
+
+	dimAccent := lipgloss.NewStyle().
+		Foreground(lipgloss.Color(p.Accent.Dim))
+
+	labelStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("252"))
+
+	// Header line: mission name + crew badge
+	header := p.DisplayName
+	if p.Crewed {
+		header += " " + missions.CrewBadge(true)
+	}
+	b.WriteString(accentStyle.Render(header))
+	b.WriteString("\n")
+	b.WriteString(subtitleStyle.Render(p.Subtitle))
+	b.WriteString("\n")
+	b.WriteString(dimAccent.Render(p.HeroText))
+	b.WriteString("\n")
+
+	// Phase + timing line
+	b.WriteString(labelStyle.Render("Phase: "))
+	b.WriteString(valueStyle.Render(st.CurrentPhase))
+
+	if st.NextEvent != nil {
+		b.WriteString("    ")
+		b.WriteString(labelStyle.Render("Next: "))
+		b.WriteString(valueStyle.Render(st.NextEvent.Name))
+		b.WriteString("  ")
+		b.WriteString(accentStyle.Render(missions.FormatCountdown(st.Countdown)))
+	} else if st.IsComplete {
+		b.WriteString("    ")
+		b.WriteString(dimAccent.Render(missions.FormatMET(st.MET)))
+	}
+	b.WriteString("\n")
+
+	// Compact timeline rail
+	b.WriteString(m.renderTimelineRail(st))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+// renderTimelineRail renders a compact horizontal timeline of mission events.
+func (m MissionDetailModel) renderTimelineRail(st *missions.SpotlightState) string {
+	if len(st.Timeline) == 0 {
+		return ""
+	}
+
+	p := st.Profile
+	pastStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(p.Accent.Dim))
+	currentStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(p.Accent.Primary))
+	futureStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	connDim := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+
+	var b strings.Builder
+	for i, item := range st.Timeline {
+		if i > 0 {
+			b.WriteString(connDim.Render(" \u203a "))
+		}
+
+		var glyph string
+		var style lipgloss.Style
+		switch item.Status {
+		case missions.TimelinePast:
+			glyph = "\u25cf" // ●
+			style = pastStyle
+		case missions.TimelineCurrent:
+			glyph = "\u25c9" // ◉
+			style = currentStyle
+		default:
+			glyph = "\u25cb" // ○
+			style = futureStyle
+		}
+
+		b.WriteString(style.Render(glyph + " " + item.Key))
+	}
 
 	return b.String()
 }
