@@ -272,6 +272,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.9.1** — Retire completed Artemis II mission profile from spotlight catalog; refactor mission runtime tests onto source-agnostic synthetic profile
 - **0.9.0** — Mission Spotlight: curated Artemis II & Voyager 1 profiles with live phase/MET/countdown, crew display, timeline rail, data provenance labels, and graceful handling of unsupported ephemeris lookups
 - **0.8.0** — Signal propagation delay visualizer, ephemeris range/light-time fallback via Horizons
 - **0.7.3** — Fix orbit trace mismatch when rapidly switching focused spacecraft
