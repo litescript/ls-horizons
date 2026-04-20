@@ -66,8 +66,6 @@ func TestBuildSpotlightState_NoProfile(t *testing.T) {
 	}
 }
 
-// syntheticProfile returns a short-lived test profile so we can exercise
-// phase/timeline/countdown logic with predictable timing.
 func syntheticProfile(launch time.Time) *MissionProfile {
 	return &MissionProfile{
 		ID:          "synthetic",
