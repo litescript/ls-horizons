@@ -15,7 +15,7 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 - **Astronomical projection** — Proper RA/Dec to Az/El conversion using GMST/LST calculations
 - **JPL Horizons integration** — Trajectory path arcs and geocentric RA/Dec for pass planning
 - **Signal propagation visualizer** — Animated light-time display showing one-way/round-trip delay with pulse animation
-- **Mission Spotlight** — Curated mission profiles with live phase tracking, MET countdown, crew info, and timeline rail (Artemis II, Voyager 1)
+- **Mission Spotlight** — Curated mission profiles with live phase tracking, MET countdown, crew info, and timeline rail (Voyager 1)
 - **Four view modes**:
   - **Dashboard** — Complex status and active spacecraft table with multi-antenna tracking and mission spotlight badges
   - **Mission Detail** — Per-spacecraft deep dive with pass schedules, link details, propagation delay, and mission spotlight panel
@@ -36,7 +36,7 @@ Real-time status of all three DSN complexes with active spacecraft table showing
 ![Dashboard](docs/screenshots/dashboard.png?v=0.9.0)
 
 ### Mission Detail View
-Deep dive into individual spacecraft with link details, pass schedules, elevation sparkline, and signal propagation visualizer showing light-time delay with animated pulse. Press `Enter` from Dashboard to jump directly here. Curated missions (like Artemis II) show a spotlight panel with phase, countdown, crew, and timeline rail — clearly labeled as schedule-derived data.
+Deep dive into individual spacecraft with link details, pass schedules, elevation sparkline, and signal propagation visualizer showing light-time delay with animated pulse. Press `Enter` from Dashboard to jump directly here. Curated missions (like Voyager 1) show a spotlight panel with phase, MET, and timeline rail — clearly labeled as schedule-derived data.
 
 ![Mission Detail](docs/screenshots/mission.png?v=0.9.0)
 
@@ -250,7 +250,7 @@ internal/
 │   └── state.go        Thread-safe state with pass plan and elevation trace caching
 ├── missions/           Mission spotlight layer
 │   ├── models.go       MissionProfile, SpotlightState, DataProvenance
-│   ├── catalog.go      Curated profiles (Artemis II, Voyager 1)
+│   ├── catalog.go      Curated profiles (Voyager 1)
 │   ├── aliases.go      Spacecraft name/code resolution
 │   ├── runtime.go      Live phase/MET/countdown computation
 │   └── viewmodel.go    Display formatting helpers
@@ -272,6 +272,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.9.1** — Retire completed Artemis II mission profile from spotlight catalog; refactor mission runtime tests onto source-agnostic synthetic profile
 - **0.9.0** — Mission Spotlight: curated Artemis II & Voyager 1 profiles with live phase/MET/countdown, crew display, timeline rail, data provenance labels, and graceful handling of unsupported ephemeris lookups
 - **0.8.0** — Signal propagation delay visualizer, ephemeris range/light-time fallback via Horizons
 - **0.7.3** — Fix orbit trace mismatch when rapidly switching focused spacecraft

@@ -2,9 +2,10 @@
 package version
 
 // Version is the current application version.
-const Version = "0.9.0"
+const Version = "0.9.1"
 
 // Milestones:
+// 0.9.1 - Retire completed Artemis II mission profile from spotlight catalog
 // 0.9.0 - Mission Spotlight: curated profiles (Artemis II, Voyager 1), data provenance, graceful gating
 // 0.8.0 - Signal propagation delay visualizer, ephemeris range/light-time fallback via Horizons
 // 0.7.3 - Fix orbit trace mismatch when rapidly switching focused spacecraft

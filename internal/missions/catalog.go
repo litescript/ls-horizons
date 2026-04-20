@@ -5,65 +5,12 @@ import "time"
 var catalog []*MissionProfile
 
 func init() {
-	catalog = append(catalog, artemisII(), voyager1())
+	catalog = append(catalog, voyager1())
 }
 
 // Catalog returns all registered mission profiles.
 func Catalog() []*MissionProfile {
 	return catalog
-}
-
-func mustParseRFC3339(s string) time.Time {
-	t, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		panic("missions: bad RFC3339 timestamp: " + s)
-	}
-	return t
-}
-
-func artemisII() *MissionProfile {
-	// Artemis II launched April 1, 2026 at 22:35 UTC from KSC LC-39B
-	// Crew: Wiseman, Glover, Koch, Hansen — ~10-day lunar flyby
-	launch := mustParseRFC3339("2026-04-01T22:35:00Z")
-
-	events := []MissionEvent{
-		{Name: "Launch", Time: launch, Key: "LAUNCH"},
-		{Name: "Upper Stage Sep", Time: launch.Add(8 * time.Minute), Key: "SEP"},
-		{Name: "Trans-Lunar Injection", Time: launch.Add(1*time.Hour + 55*time.Minute), Key: "TLI"},
-		{Name: "Lunar Flyby", Time: launch.Add(4*24*time.Hour + 8*time.Hour), Key: "FLYBY"},
-		{Name: "Entry Interface", Time: launch.Add(10*24*time.Hour + 4*time.Hour), Key: "ENTRY"},
-		{Name: "Splashdown", Time: launch.Add(10*24*time.Hour + 4*time.Hour + 30*time.Minute), Key: "SPLASH"},
-	}
-
-	phases := []MissionPhase{
-		{Name: "Pre-Launch", Start: launch.Add(-8760 * time.Hour), End: launch},
-		{Name: "Launch & Ascent", Start: launch, End: launch.Add(1*time.Hour + 55*time.Minute)},
-		{Name: "Outbound Transit", Start: launch.Add(1*time.Hour + 55*time.Minute), End: launch.Add(4*24*time.Hour - 12*time.Hour)},
-		{Name: "Lunar Flyby", Start: launch.Add(4*24*time.Hour - 12*time.Hour), End: launch.Add(4*24*time.Hour + 20*time.Hour)},
-		{Name: "Return Transit", Start: launch.Add(4*24*time.Hour + 20*time.Hour), End: launch.Add(10*24*time.Hour + 4*time.Hour)},
-		{Name: "Entry & Recovery", Start: launch.Add(10*24*time.Hour + 4*time.Hour), End: launch.Add(10*24*time.Hour + 6*time.Hour)},
-		{Name: "Mission Complete", Start: launch.Add(10*24*time.Hour + 6*time.Hour), End: launch.Add(8760 * time.Hour)},
-	}
-
-	return &MissionProfile{
-		ID:          "artemis-ii",
-		DisplayName: "ARTEMIS II",
-		Subtitle:    "First Crewed Lunar Flyby \u00b7 Orion MPCV",
-		HeroText:    "Crewed lunar flyby \u2014 validating Orion life support and deep-space navigation",
-		Aliases:     []string{"EM2", "ORION", "ARTEMIS II", "ARTEMIS2"},
-		Crewed:      true,
-		Crew:        []string{"Wiseman", "Glover", "Koch", "Hansen"},
-		PrimaryBody: "Moon",
-		Accent: MissionAccent{
-			Primary:   "#e06020", // NASA orange
-			Secondary: "#4488cc", // Deep space blue
-			Dim:       "#705030", // Muted orange
-		},
-		StartTime: launch,
-		EndTime:   launch.Add(10*24*time.Hour + 6*time.Hour),
-		Events:    events,
-		Phases:    phases,
-	}
 }
 
 func voyager1() *MissionProfile {

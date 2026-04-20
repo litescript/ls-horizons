@@ -463,9 +463,9 @@ func TestCuratedMissionRenderNoPanic(t *testing.T) {
 				m = m.SetSize(80, 24)
 				m = m.UpdateData(state.Snapshot{
 					Spacecraft: []dsn.Spacecraft{
-						{ID: 1, Name: "EM2", Distance: 10000},
+						{ID: 1, Name: "VGR1", Distance: 10000},
 					},
-					ElevationTraceError: errors.New("unknown spacecraft: EM2"),
+					ElevationTraceError: errors.New("unknown spacecraft: VGR1"),
 				})
 				return m
 			},
@@ -477,9 +477,9 @@ func TestCuratedMissionRenderNoPanic(t *testing.T) {
 				m = m.SetSize(80, 24)
 				m = m.UpdateData(state.Snapshot{
 					Spacecraft: []dsn.Spacecraft{
-						{ID: 1, Name: "EM2", Distance: 10000},
+						{ID: 1, Name: "VGR1", Distance: 10000},
 					},
-					PassPlanError: errors.New("unknown spacecraft: EM2"),
+					PassPlanError: errors.New("unknown spacecraft: VGR1"),
 				})
 				return m
 			},
@@ -491,7 +491,7 @@ func TestCuratedMissionRenderNoPanic(t *testing.T) {
 				m = m.SetSize(40, 20)
 				m = m.UpdateData(state.Snapshot{
 					Spacecraft: []dsn.Spacecraft{
-						{ID: 1, Name: "EM2", Distance: 10000},
+						{ID: 1, Name: "VGR1", Distance: 10000},
 					},
 				})
 				return m
@@ -528,15 +528,15 @@ func TestSelectedSpacecraftIsCurated(t *testing.T) {
 	m := NewMissionDetailModel()
 	m = m.UpdateData(state.Snapshot{
 		Spacecraft: []dsn.Spacecraft{
-			{ID: 1, Name: "EM2"},
+			{ID: 1, Name: "VGR1"},
 			{ID: 2, Name: "JWST"},
 		},
 	})
 
-	// EM2 is curated (Artemis II profile)
+	// VGR1 is curated (Voyager 1 profile)
 	m.SetSelectedSpacecraft(1)
 	if !m.selectedSpacecraftIsCurated() {
-		t.Error("EM2 should be identified as curated")
+		t.Error("VGR1 should be identified as curated")
 	}
 
 	// JWST has no curated profile

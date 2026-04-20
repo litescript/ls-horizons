@@ -29,7 +29,7 @@ type MissionProfile struct {
 	DisplayName string
 	Subtitle    string
 	HeroText    string
-	Aliases     []string // Name/code match keys (e.g., "EM2", "ORION")
+	Aliases     []string // Name/code match keys (e.g., "VGR1", "VOYAGER 1")
 	Crewed      bool
 	Crew        []string // Crew member names (empty for robotic missions)
 	PrimaryBody string   // E.g., "Moon"

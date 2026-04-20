@@ -12,14 +12,13 @@ func TestResolveProfile(t *testing.T) {
 		input string
 		want  string // expected profile ID, or "" for nil
 	}{
-		{"EM2", "artemis-ii"},
-		{"em2", "artemis-ii"},
-		{"  EM2  ", "artemis-ii"},
-		{"ORION", "artemis-ii"},
-		{"ARTEMIS II", "artemis-ii"},
-		{"ARTEMIS2", "artemis-ii"},
+		{"VGR1", "voyager-1"},
+		{"vgr1", "voyager-1"},
+		{"  VGR1  ", "voyager-1"},
+		{"VOYAGER 1", "voyager-1"},
+		{"VOYAGER1", "voyager-1"},
 		{"JWST", ""},
-		{"ARTEMIS", ""}, // bare "ARTEMIS" excluded: collides with lunar ARTEMIS-P1/P2
+		{"VOYAGER", ""}, // bare "VOYAGER" excluded: ambiguous with Voyager 2
 		{"", ""},
 		{"   ", ""},
 	}
@@ -44,8 +43,8 @@ func TestResolveProfile(t *testing.T) {
 }
 
 func TestHasSpotlight(t *testing.T) {
-	if !HasSpotlight("EM2") {
-		t.Error("HasSpotlight(EM2) should be true")
+	if !HasSpotlight("VGR1") {
+		t.Error("HasSpotlight(VGR1) should be true")
 	}
 	if HasSpotlight("JWST") {
 		t.Error("HasSpotlight(JWST) should be false")
@@ -67,12 +66,45 @@ func TestBuildSpotlightState_NoProfile(t *testing.T) {
 	}
 }
 
-func TestBuildSpotlightState_PreLaunch(t *testing.T) {
-	profile := Catalog()[0] // Artemis II
-	preLaunch := profile.StartTime.Add(-24 * time.Hour)
+// syntheticProfile returns a short-lived test profile so we can exercise
+// phase/timeline/countdown logic with predictable timing.
+func syntheticProfile(launch time.Time) *MissionProfile {
+	return &MissionProfile{
+		ID:          "synthetic",
+		DisplayName: "SYNTHETIC",
+		Aliases:     []string{"SYN"},
+		StartTime:   launch,
+		EndTime:     launch.Add(10 * time.Hour),
+		Events: []MissionEvent{
+			{Name: "Launch", Time: launch, Key: "LAUNCH"},
+			{Name: "Stage Sep", Time: launch.Add(1 * time.Hour), Key: "SEP"},
+			{Name: "Burn", Time: launch.Add(3 * time.Hour), Key: "BURN"},
+			{Name: "Recovery", Time: launch.Add(9 * time.Hour), Key: "END"},
+		},
+		Phases: []MissionPhase{
+			{Name: "Pre-Launch", Start: launch.Add(-24 * time.Hour), End: launch},
+			{Name: "Ascent", Start: launch, End: launch.Add(1 * time.Hour)},
+			{Name: "Cruise", Start: launch.Add(1 * time.Hour), End: launch.Add(8 * time.Hour)},
+			{Name: "Recovery", Start: launch.Add(8 * time.Hour), End: launch.Add(10 * time.Hour)},
+		},
+	}
+}
 
-	sc := &dsn.Spacecraft{ID: 1, Name: "EM2"}
-	st := BuildSpotlightState(preLaunch, sc)
+func buildStateForProfile(now time.Time, profile *MissionProfile) *SpotlightState {
+	// Temporarily register the profile in the catalog so BuildSpotlightState
+	// can resolve it via the alias lookup.
+	original := catalog
+	catalog = append([]*MissionProfile{profile}, original...)
+	defer func() { catalog = original }()
+
+	sc := &dsn.Spacecraft{ID: 999, Name: profile.Aliases[0]}
+	return BuildSpotlightState(now, sc)
+}
+
+func TestBuildSpotlightState_PreLaunch(t *testing.T) {
+	launch := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	profile := syntheticProfile(launch)
+	st := buildStateForProfile(launch.Add(-6*time.Hour), profile)
 
 	if st == nil {
 		t.Fatal("expected non-nil state")
@@ -86,11 +118,8 @@ func TestBuildSpotlightState_PreLaunch(t *testing.T) {
 	if st.CurrentPhase != "Pre-Launch" {
 		t.Errorf("phase = %q, want Pre-Launch", st.CurrentPhase)
 	}
-	if st.NextEvent == nil {
-		t.Fatal("expected NextEvent")
-	}
-	if st.NextEvent.Key != "LAUNCH" {
-		t.Errorf("next event = %q, want LAUNCH", st.NextEvent.Key)
+	if st.NextEvent == nil || st.NextEvent.Key != "LAUNCH" {
+		t.Errorf("next event = %+v, want LAUNCH", st.NextEvent)
 	}
 	if st.Countdown <= 0 {
 		t.Errorf("countdown should be positive, got %v", st.Countdown)
@@ -101,50 +130,35 @@ func TestBuildSpotlightState_PreLaunch(t *testing.T) {
 }
 
 func TestBuildSpotlightState_MidMission(t *testing.T) {
-	profile := Catalog()[0]
-	// 50 hours after launch: should be in "Outbound Transit" (2h..84h)
-	midFlight := profile.StartTime.Add(50 * time.Hour)
-
-	sc := &dsn.Spacecraft{ID: 1, Name: "EM2"}
-	st := BuildSpotlightState(midFlight, sc)
+	launch := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	profile := syntheticProfile(launch)
+	// 2h after launch: "Cruise" phase (1h..8h); next event is BURN at 3h.
+	st := buildStateForProfile(launch.Add(2*time.Hour), profile)
 
 	if st == nil {
 		t.Fatal("expected non-nil state")
 	}
-	if st.IsPreLaunch {
-		t.Error("expected IsPreLaunch=false")
+	if st.IsPreLaunch || st.IsComplete {
+		t.Errorf("expected mid-mission flags, got pre=%v complete=%v", st.IsPreLaunch, st.IsComplete)
 	}
-	if st.IsComplete {
-		t.Error("expected IsComplete=false")
+	if st.CurrentPhase != "Cruise" {
+		t.Errorf("phase = %q, want Cruise", st.CurrentPhase)
 	}
-	if st.CurrentPhase != "Outbound Transit" {
-		t.Errorf("phase = %q, want Outbound Transit", st.CurrentPhase)
+	if st.NextEvent == nil || st.NextEvent.Key != "BURN" {
+		t.Errorf("next event = %+v, want BURN", st.NextEvent)
 	}
-	// Next event should be "Lunar Flyby" (at 96h)
-	if st.NextEvent == nil {
-		t.Fatal("expected NextEvent")
-	}
-	if st.NextEvent.Key != "FLYBY" {
-		t.Errorf("next event = %q, want FLYBY", st.NextEvent.Key)
-	}
-	// MET should be ~50h
-	if st.MET < 49*time.Hour || st.MET > 51*time.Hour {
-		t.Errorf("MET = %v, want ~50h", st.MET)
+	if st.MET < 119*time.Minute || st.MET > 121*time.Minute {
+		t.Errorf("MET = %v, want ~2h", st.MET)
 	}
 }
 
 func TestBuildSpotlightState_Complete(t *testing.T) {
-	profile := Catalog()[0]
-	afterEnd := profile.EndTime.Add(24 * time.Hour)
-
-	sc := &dsn.Spacecraft{ID: 1, Name: "EM2"}
-	st := BuildSpotlightState(afterEnd, sc)
+	launch := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	profile := syntheticProfile(launch)
+	st := buildStateForProfile(profile.EndTime.Add(24*time.Hour), profile)
 
 	if st == nil {
 		t.Fatal("expected non-nil state")
-	}
-	if st.IsPreLaunch {
-		t.Error("expected IsPreLaunch=false")
 	}
 	if !st.IsComplete {
 		t.Error("expected IsComplete=true")
@@ -158,47 +172,33 @@ func TestBuildSpotlightState_Complete(t *testing.T) {
 }
 
 func TestTimelineStatuses(t *testing.T) {
-	profile := Catalog()[0]
-	// 50h in: LAUNCH, SEP, TLI should be past; TLI is current; FLYBY, ENTRY, SPLASH future
-	midFlight := profile.StartTime.Add(50 * time.Hour)
+	launch := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	profile := syntheticProfile(launch)
+	// 2h in: LAUNCH (0h) past, SEP (1h) current (most recent past), BURN/END future.
+	st := buildStateForProfile(launch.Add(2*time.Hour), profile)
 
-	sc := &dsn.Spacecraft{ID: 1, Name: "EM2"}
-	st := BuildSpotlightState(midFlight, sc)
-
-	if len(st.Timeline) != 6 {
-		t.Fatalf("timeline items = %d, want 6", len(st.Timeline))
+	if len(st.Timeline) != 4 {
+		t.Fatalf("timeline items = %d, want 4", len(st.Timeline))
 	}
-
-	// LAUNCH (0h) = past, SEP (10m) = past, TLI (2h) = current (most recent past)
 	if st.Timeline[0].Status != TimelinePast {
 		t.Errorf("LAUNCH status = %d, want Past", st.Timeline[0].Status)
 	}
-	if st.Timeline[1].Status != TimelinePast {
-		t.Errorf("SEP status = %d, want Past", st.Timeline[1].Status)
+	if st.Timeline[1].Status != TimelineCurrent {
+		t.Errorf("SEP status = %d, want Current", st.Timeline[1].Status)
 	}
-	if st.Timeline[2].Status != TimelineCurrent {
-		t.Errorf("TLI status = %d, want Current", st.Timeline[2].Status)
+	if st.Timeline[2].Status != TimelineFuture {
+		t.Errorf("BURN status = %d, want Future", st.Timeline[2].Status)
 	}
-	// FLYBY (96h), ENTRY (192h), SPLASH (192.5h) = future
 	if st.Timeline[3].Status != TimelineFuture {
-		t.Errorf("FLYBY status = %d, want Future", st.Timeline[3].Status)
-	}
-	if st.Timeline[4].Status != TimelineFuture {
-		t.Errorf("ENTRY status = %d, want Future", st.Timeline[4].Status)
-	}
-	if st.Timeline[5].Status != TimelineFuture {
-		t.Errorf("SPLASH status = %d, want Future", st.Timeline[5].Status)
+		t.Errorf("END status = %d, want Future", st.Timeline[3].Status)
 	}
 }
 
 func TestTimelineAllPast_AfterComplete(t *testing.T) {
-	profile := Catalog()[0]
-	afterEnd := profile.EndTime.Add(24 * time.Hour)
+	launch := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	profile := syntheticProfile(launch)
+	st := buildStateForProfile(profile.EndTime.Add(24*time.Hour), profile)
 
-	sc := &dsn.Spacecraft{ID: 1, Name: "EM2"}
-	st := BuildSpotlightState(afterEnd, sc)
-
-	// After mission end, all items should be Past (none Current)
 	for _, item := range st.Timeline {
 		if item.Status != TimelinePast {
 			t.Errorf("item %q status = %d, want Past after mission complete", item.Key, item.Status)
@@ -207,23 +207,13 @@ func TestTimelineAllPast_AfterComplete(t *testing.T) {
 }
 
 func TestSpotlightProvenance(t *testing.T) {
-	sc := &dsn.Spacecraft{ID: 1, Name: "EM2"}
+	sc := &dsn.Spacecraft{ID: 31, Name: "VGR1"}
 	st := BuildSpotlightState(time.Now(), sc)
 	if st == nil {
-		t.Fatal("expected non-nil state")
-	}
-	if st.Provenance != ProvenanceCurated {
-		t.Errorf("provenance = %d, want ProvenanceCurated", st.Provenance)
-	}
-
-	// Voyager 1 should also be curated
-	sc2 := &dsn.Spacecraft{ID: 31, Name: "VGR1"}
-	st2 := BuildSpotlightState(time.Now(), sc2)
-	if st2 == nil {
 		t.Fatal("expected non-nil state for VGR1")
 	}
-	if st2.Provenance != ProvenanceCurated {
-		t.Errorf("VGR1 provenance = %d, want ProvenanceCurated", st2.Provenance)
+	if st.Provenance != ProvenanceCurated {
+		t.Errorf("VGR1 provenance = %d, want ProvenanceCurated", st.Provenance)
 	}
 }
 
@@ -282,35 +272,14 @@ func TestCrewBadge(t *testing.T) {
 
 func TestCatalogNotEmpty(t *testing.T) {
 	c := Catalog()
-	if len(c) < 2 {
-		t.Fatalf("catalog should have at least 2 profiles, got %d", len(c))
-	}
-
-	// Verify Artemis II profile integrity
-	p := c[0]
-	if p.ID != "artemis-ii" {
-		t.Errorf("first profile ID = %q, want artemis-ii", p.ID)
-	}
-	if len(p.Events) != 6 {
-		t.Errorf("artemis events = %d, want 6", len(p.Events))
-	}
-	if len(p.Phases) != 7 {
-		t.Errorf("artemis phases = %d, want 7", len(p.Phases))
-	}
-	if !p.Crewed {
-		t.Error("Artemis II should be crewed")
-	}
-	if len(p.Crew) != 4 {
-		t.Errorf("artemis crew = %d, want 4", len(p.Crew))
-	}
-	if p.PrimaryBody != "Moon" {
-		t.Errorf("primary body = %q, want Moon", p.PrimaryBody)
+	if len(c) < 1 {
+		t.Fatalf("catalog should have at least 1 profile, got %d", len(c))
 	}
 
 	// Verify Voyager 1 profile integrity
-	v := c[1]
+	v := c[0]
 	if v.ID != "voyager-1" {
-		t.Errorf("second profile ID = %q, want voyager-1", v.ID)
+		t.Errorf("first profile ID = %q, want voyager-1", v.ID)
 	}
 	if len(v.Events) != 6 {
 		t.Errorf("voyager events = %d, want 6", len(v.Events))
@@ -349,16 +318,10 @@ func TestVoyager1Spotlight(t *testing.T) {
 }
 
 func TestNoAliasCrossTalk(t *testing.T) {
-	// VGR1 should only match Voyager 1, not Artemis II
+	// VGR1 should resolve to voyager-1
 	p := ResolveProfile("VGR1")
 	if p == nil || p.ID != "voyager-1" {
 		t.Error("VGR1 should resolve to voyager-1")
-	}
-
-	// EM2 should only match Artemis II, not Voyager 1
-	p = ResolveProfile("EM2")
-	if p == nil || p.ID != "artemis-ii" {
-		t.Error("EM2 should resolve to artemis-ii")
 	}
 
 	// VOYAGER (bare) should NOT match — too ambiguous
