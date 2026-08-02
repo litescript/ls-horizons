@@ -6,15 +6,37 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/litescript/ls-horizons/internal/version"
 )
+
+// SchemaVersion identifies the shape of the exported JSON. Consumers should
+// check it and refuse to parse a major version they don't understand -- JPL
+// gives the same advice about their own feeds, and it costs nothing to honor.
+//
+// Bump the major component on any breaking change to field names or types;
+// bump the minor component when adding fields.
+const SchemaVersion = "1.0"
 
 // SnapshotExport is the JSON-serializable representation of DSN state.
 type SnapshotExport struct {
-	Timestamp    time.Time       `json:"timestamp"`
-	FetchedAt    time.Time       `json:"fetched_at"`
-	Stations     []StationExport `json:"stations"`
-	Links        []LinkExport    `json:"links"`
-	ComplexLoads []ComplexLoad   `json:"complex_loads"`
+	SchemaVersion string              `json:"schema_version"`
+	Generator     string              `json:"generator"`
+	Timestamp     time.Time           `json:"timestamp"`
+	FetchedAt     time.Time           `json:"fetched_at"`
+	Stations      []StationExport     `json:"stations"`
+	Links         []LinkExport        `json:"links"`
+	ComplexLoads  []ComplexLoadExport `json:"complex_loads"`
+}
+
+// ComplexLoadExport is a JSON-friendly complex utilization record.
+// ComplexLoad itself carries no struct tags, so exporting it directly emitted
+// Go field names amid otherwise snake_case output.
+type ComplexLoadExport struct {
+	Complex       string  `json:"complex"`
+	ActiveLinks   int     `json:"active_links"`
+	TotalAntennas int     `json:"total_antennas"`
+	Utilization   float64 `json:"utilization"`
 }
 
 // StationExport is a JSON-friendly station representation.
@@ -34,30 +56,49 @@ type AntennaExport struct {
 }
 
 // LinkExport is a JSON-friendly link with derived fields.
+//
+// Distance and RTLT are pointers because the DSN feed reports -1 for targets it
+// has no ranging solution for. Emitting that verbatim gives consumers a negative
+// light time; null says "unknown" without inviting arithmetic on a sentinel.
 type LinkExport struct {
-	Complex       string  `json:"complex"`
-	StationID     string  `json:"station_id"`
-	AntennaID     string  `json:"antenna_id"`
-	Spacecraft    string  `json:"spacecraft"`
-	SpacecraftID  int     `json:"spacecraft_id"`
-	Band          string  `json:"band"`
-	DataRate      float64 `json:"data_rate_bps"`
-	Distance      float64 `json:"distance_km"`
-	RTLT          float64 `json:"rtlt_seconds"`
-	Elevation     float64 `json:"elevation"`
-	StruggleIndex float64 `json:"struggle_index"`
-	Health        string  `json:"health"`
+	Complex       string   `json:"complex"`
+	StationID     string   `json:"station_id"`
+	AntennaID     string   `json:"antenna_id"`
+	Spacecraft    string   `json:"spacecraft"`
+	SpacecraftID  int      `json:"spacecraft_id"`
+	Band          string   `json:"band"`
+	DataRate      float64  `json:"data_rate_bps"`
+	Distance      *float64 `json:"distance_km"`
+	RTLT          *float64 `json:"rtlt_seconds"`
+	Elevation     float64  `json:"elevation"`
+	StruggleIndex float64  `json:"struggle_index"`
+	Health        string   `json:"health"`
+}
+
+// positiveOrNil returns a pointer to v, or nil when v is not a usable
+// measurement. The DSN feed uses non-positive values to mean "no solution".
+func positiveOrNil(v float64) *float64 {
+	if v <= 0 {
+		return nil
+	}
+	return &v
 }
 
 // ExportSnapshot converts DSNData to an exportable format.
 func ExportSnapshot(data *DSNData, fetchedAt time.Time) *SnapshotExport {
 	if data == nil {
-		return &SnapshotExport{FetchedAt: fetchedAt}
+		return &SnapshotExport{
+			SchemaVersion: SchemaVersion,
+			Generator:     generatorID(),
+			FetchedAt:     fetchedAt,
+		}
 	}
 
 	export := &SnapshotExport{
-		Timestamp: data.Timestamp,
-		FetchedAt: fetchedAt,
+		SchemaVersion: SchemaVersion,
+		Generator:     generatorID(),
+		Timestamp:     data.Timestamp,
+		FetchedAt:     fetchedAt,
 	}
 
 	// Build elevation map for struggle calculations
@@ -92,8 +133,8 @@ func ExportSnapshot(data *DSNData, fetchedAt time.Time) *SnapshotExport {
 			SpacecraftID:  link.SpacecraftID,
 			Band:          link.Band,
 			DataRate:      link.DataRate,
-			Distance:      link.Distance,
-			RTLT:          link.RTLT,
+			Distance:      positiveOrNil(link.Distance),
+			RTLT:          positiveOrNil(link.RTLT),
 			Elevation:     elev,
 			StruggleIndex: struggle,
 			Health:        string(health),
@@ -101,12 +142,22 @@ func ExportSnapshot(data *DSNData, fetchedAt time.Time) *SnapshotExport {
 	}
 
 	// Add complex loads
-	loads := ComplexUtilization(data)
-	for _, load := range loads {
-		export.ComplexLoads = append(export.ComplexLoads, load)
+	for _, load := range ComplexUtilization(data) {
+		export.ComplexLoads = append(export.ComplexLoads, ComplexLoadExport{
+			Complex:       string(load.Complex),
+			ActiveLinks:   load.ActiveLinks,
+			TotalAntennas: load.TotalAntennas,
+			Utilization:   load.Utilization,
+		})
 	}
 
 	return export
+}
+
+// generatorID identifies which build produced a payload, so a stale file served
+// from disk can be traced back to the binary that wrote it.
+func generatorID() string {
+	return "ls-horizons/" + version.Version
 }
 
 // WriteJSON writes the snapshot as JSON to the given writer.
