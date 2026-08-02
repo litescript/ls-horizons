@@ -1,0 +1,65 @@
+[Unit]
+Description=ls-horizons DSN + solar system snapshot publisher
+Documentation=https://github.com/litescript/ls-horizons
+# Don't start before the network can actually resolve and route.
+After=network-online.target
+Wants=network-online.target
+
+# Back off hard rather than hot-looping against NASA if something is broken.
+# These belong in [Unit]; systemd ignores them under [Service].
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=ls-horizons
+Group=ls-horizons
+
+# Poll once a minute. The DSN feed regenerates about every five seconds, but a
+# station handoff plays out over hours, so a minute is ample freshness. This is
+# a public NASA feed being polled around the clock -- restraint is the point.
+# The fetcher revalidates with ETag/If-Modified-Since, so an unchanged feed
+# costs a 304 with no body. Each interval is randomly stretched up to 20% so
+# separate instances don't converge on the same second.
+ExecStart=/usr/local/bin/ls-horizons --serve-dir /var/lib/ls-horizons/web --watch 60s
+
+Restart=on-failure
+RestartSec=30s
+
+# The snapshot directory is the only thing this needs to write.
+StateDirectory=ls-horizons
+StateDirectoryMode=0755
+
+# Hardening. This process makes outbound HTTPS requests and writes two JSON
+# files; it has no business doing anything else.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+UMask=0022
+
+# Logs go to the journal; the app writes errors to stderr and never to stdout
+# in serve mode, so stdout staying quiet is the healthy case.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

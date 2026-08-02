@@ -1,0 +1,46 @@
+# ls-horizons data endpoints for a browser client (Three.js scene, dashboard, etc).
+#
+# Nothing is proxied to ls-horizons -- it has no HTTP server. It writes two JSON
+# files on a timer and Caddy serves them as static content. That separation is
+# deliberate: the number of people visiting the site has no effect whatsoever on
+# how often NASA and JPL are contacted. Traffic to these endpoints is served
+# entirely from disk.
+
+horizons.example.com {
+	encode zstd gzip
+
+	# The JSON API surface.
+	handle /api/* {
+		root * /var/lib/ls-horizons/web
+		uri strip_prefix /api
+
+		# The snapshot is rewritten about once a minute. Let browsers and any
+		# intermediate cache hold it briefly, and serve a stale copy while
+		# revalidating so a publisher hiccup never shows the visitor an error.
+		header Cache-Control "public, max-age=30, stale-while-revalidate=120"
+		header Access-Control-Allow-Origin "*"
+		header X-Content-Type-Options "nosniff"
+
+		file_server
+	}
+
+	# The Three.js page itself.
+	handle {
+		root * /var/www/horizons
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Resulting endpoints:
+#   https://horizons.example.com/api/dsn.json
+#   https://horizons.example.com/api/solarsystem.json
+#
+# Both are written atomically (temp file + rename), so Caddy can never catch one
+# mid-write and serve a truncated body.
+#
+# Note on CORS: Access-Control-Allow-Origin is set here because this is *your*
+# derived data on *your* origin. Do not reverse-proxy JPL Horizons to work around
+# its lack of CORS headers -- their fair use policy explicitly says the APIs may
+# not be embedded in a website, and the missing header is that policy being
+# enforced, not an oversight.
