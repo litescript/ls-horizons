@@ -43,3 +43,4 @@ Thumbs.db
 *.gz
 *.bz2
 *.lzip
+os-builds/*.zip
