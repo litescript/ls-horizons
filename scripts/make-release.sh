@@ -37,22 +37,39 @@ build() {
 	# against the build host's glibc, and then refuses to start on any machine
 	# with an older one. The cross-compiled targets disable cgo on their own,
 	# so pinning it here just makes every target behave the same way.
-	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$OUT/$subdir/$binname" ./cmd/ls-horizons
-	echo "  built $OUT/$subdir/$binname"
+	#
+	# -trimpath rewrites embedded source paths to their module-relative form.
+	# Without it every release binary carries the absolute paths of whoever's
+	# machine built it, which is both noise and a small privacy leak, and it
+	# makes two builds of the same commit differ for no useful reason.
+	#
+	# -s -w drops the symbol table and DWARF, cutting roughly a third of the
+	# size. Panic tracebacks survive this: Go resolves them from its own
+	# pclntab, not from DWARF. Only external debuggers lose out, and they
+	# should be pointed at a locally built binary anyway.
+	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+		go build -trimpath -ldflags "-s -w" -o "$OUT/$subdir/$binname" ./cmd/ls-horizons
+	echo "  built $OUT/$subdir/$binname ($(du -h "$OUT/$subdir/$binname" | cut -f1))"
 
 	# Stage a versioned directory so extracting doesn't scatter LICENSE and
-	# NOTICE into the user's working directory.
+	# NOTICE into the user's working directory. The platform belongs in that
+	# directory name as well as in the archive name: without it, every platform
+	# unpacks to the same path, and anyone fetching two of them into one folder
+	# silently overwrites one binary with another for a different architecture.
+	# Naming it after the archive keeps what you download and what you get in
+	# sync.
+	local top="ls-horizons-v${VERSION}-${subdir}"
 	local stage
 	stage="$(mktemp -d)"
-	local dir="$stage/ls-horizons-v${VERSION}"
+	local dir="$stage/$top"
 	mkdir -p "$dir"
 	cp "$OUT/$subdir/$binname" "$dir/"
 	cp "${LEGAL[@]}" "$dir/"
 
 	rm -f "$OUT/$archive"
 	case "$archive" in
-		*.zip) (cd "$stage" && zip -qr "$OLDPWD/$OUT/$archive" "ls-horizons-v${VERSION}") ;;
-		*)     tar czf "$OUT/$archive" -C "$stage" "ls-horizons-v${VERSION}" ;;
+		*.zip) (cd "$stage" && zip -qr "$OLDPWD/$OUT/$archive" "$top") ;;
+		*)     tar czf "$OUT/$archive" -C "$stage" "$top" ;;
 	esac
 	rm -rf "$stage"
 	echo "  packaged $OUT/$archive"
