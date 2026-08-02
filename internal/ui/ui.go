@@ -132,13 +132,8 @@ func New(stateMgr *state.Manager, ephemProvider ephem.Provider) Model {
 		skyView = skyView.SetPathProvider(ephemProvider)
 	}
 
-	// Create solar system cache with Horizons provider if available
-	var solarCache *dsn.SolarSystemCache
-	if hp, ok := ephemProvider.(*ephem.HorizonsProvider); ok {
-		solarCache = dsn.NewSolarSystemCache(hp)
-	} else {
-		solarCache = dsn.NewSolarSystemCache(nil)
-	}
+	// Planet positions are computed locally, so the cache needs no provider.
+	solarCache := dsn.NewSolarSystemCache()
 
 	return Model{
 		state:         stateMgr,
@@ -288,22 +283,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 		m.skyView = m.skyView.UpdateData(m.snapshot)
 
-		// Update solar system cache with DSN data (async to avoid blocking UI)
+		// Update solar system cache with DSN data. Both updates are pure
+		// computation now -- no network, so no goroutine and no partial state.
 		if m.solarCache != nil {
-			// Spacecraft updates are fast (just uses DSN data)
 			if m.solarCache.NeedsSpacecraftRefresh() {
 				_ = m.solarCache.UpdateSpacecraft(m.snapshot.Data)
 			}
-			// Planet updates are slow (HTTP calls) - do async with panic recovery
 			if m.solarCache.NeedsPlanetRefresh() {
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							// Log but don't crash - planet data is non-critical
-						}
-					}()
-					m.solarCache.UpdatePlanets()
-				}()
+				m.solarCache.UpdatePlanets()
 			}
 			solarSnap := m.solarCache.GetSnapshot()
 			m.solarSystem = m.solarSystem.UpdateData(m.snapshot, solarSnap)

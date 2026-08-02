@@ -136,27 +136,19 @@ type SolarSystemCache struct {
 	snapshot         SolarSystemSnapshot
 	lastPlanetUpdate time.Time
 	lastSCUpdate     time.Time
-
-	// Provider interface for Horizons queries
-	provider SolarSystemProvider
 }
 
-// SolarSystemProvider defines the interface for fetching heliocentric positions.
-type SolarSystemProvider interface {
-	// GetHeliocentricPosition returns heliocentric ecliptic position in AU.
-	GetHeliocentricPosition(naifID int, t time.Time) (astro.Vec3, error)
-}
-
-// Planet cache TTL (planets move slowly)
-const PlanetCacheTTL = 10 * time.Minute
+// Planet cache TTL. Positions are computed locally from orbital elements, so a
+// refresh costs microseconds and no network traffic; the TTL exists only to avoid
+// rebuilding the snapshot on every UI tick.
+const PlanetCacheTTL = time.Minute
 
 // Spacecraft cache TTL
 const SpacecraftCacheTTL = 5 * time.Minute
 
 // NewSolarSystemCache creates a new cache.
-func NewSolarSystemCache(provider SolarSystemProvider) *SolarSystemCache {
+func NewSolarSystemCache() *SolarSystemCache {
 	return &SolarSystemCache{
-		provider: provider,
 		snapshot: SolarSystemSnapshot{
 			Bodies: []EclipticBody{
 				// Sun at origin (always present)
@@ -187,34 +179,20 @@ func (c *SolarSystemCache) NeedsSpacecraftRefresh() bool {
 	return time.Since(c.lastSCUpdate) > SpacecraftCacheTTL
 }
 
-// UpdatePlanets fetches fresh planet positions from the provider.
-func (c *SolarSystemCache) UpdatePlanets() error {
-	if c.provider == nil {
-		// Use static fallback positions
-		return c.updatePlanetsStatic()
-	}
-
+// UpdatePlanets recomputes planet positions from Keplerian orbital elements.
+//
+// This is deliberately a local computation rather than a JPL Horizons query.
+// Horizons is a live ephemeris service published under a fair-use policy, and
+// planets are the highest-volume, lowest-value thing an app like this could ask
+// it for -- they move imperceptibly between refreshes. Computing them here costs
+// microseconds, needs no network, and stays accurate to a few arcminutes.
+func (c *SolarSystemCache) UpdatePlanets() {
 	now := time.Now()
-	var planets []EclipticBody
-
-	for _, p := range Planets {
-		pos, err := c.provider.GetHeliocentricPosition(p.NAIFID, now)
-		if err != nil {
-			// Use approximate position based on semi-major axis
-			pos = approximatePlanetPosition(p, now)
-		}
-
-		planets = append(planets, EclipticBody{
-			Name:  p.Name,
-			Code:  p.Code,
-			Kind:  BodyPlanet,
-			Class: p.Class,
-			Pos:   pos,
-		})
-	}
+	planets := ComputePlanetBodies(now)
 
 	c.mu.Lock()
-	// Rebuild snapshot with new planets
+	defer c.mu.Unlock()
+
 	newBodies := []EclipticBody{{Name: "Sun", Code: "SUN", Kind: BodySun, Pos: astro.Vec3{}}}
 	newBodies = append(newBodies, planets...)
 
@@ -230,67 +208,25 @@ func (c *SolarSystemCache) UpdatePlanets() error {
 		Bodies:      newBodies,
 	}
 	c.lastPlanetUpdate = now
-	c.mu.Unlock()
-
-	return nil
 }
 
-// updatePlanetsStatic uses approximate positions without Horizons.
-func (c *SolarSystemCache) updatePlanetsStatic() error {
-	now := time.Now()
-	var planets []EclipticBody
-
+// ComputePlanetBodies returns the eight major planets as ecliptic bodies at time t.
+func ComputePlanetBodies(t time.Time) []EclipticBody {
+	planets := make([]EclipticBody, 0, len(Planets))
 	for _, p := range Planets {
-		pos := approximatePlanetPosition(p, now)
+		el, ok := astro.PlanetElementsByName(p.Name)
+		if !ok {
+			continue
+		}
 		planets = append(planets, EclipticBody{
 			Name:  p.Name,
 			Code:  p.Code,
 			Kind:  BodyPlanet,
 			Class: p.Class,
-			Pos:   pos,
+			Pos:   el.HeliocentricPosition(t),
 		})
 	}
-
-	c.mu.Lock()
-	newBodies := []EclipticBody{{Name: "Sun", Code: "SUN", Kind: BodySun, Pos: astro.Vec3{}}}
-	newBodies = append(newBodies, planets...)
-
-	// Preserve existing spacecraft
-	for _, b := range c.snapshot.Bodies {
-		if b.Kind == BodySpacecraft {
-			newBodies = append(newBodies, b)
-		}
-	}
-
-	c.snapshot = SolarSystemSnapshot{
-		GeneratedAt: now,
-		Bodies:      newBodies,
-	}
-	c.lastPlanetUpdate = now
-	c.mu.Unlock()
-
-	return nil
-}
-
-// approximatePlanetPosition generates a rough position based on orbital period.
-// This is a placeholder for when Horizons is unavailable.
-func approximatePlanetPosition(p PlanetDef, t time.Time) astro.Vec3 {
-	// Orbital period in years (Kepler's 3rd law approximation)
-	periodYears := p.SemiMajorAU * p.SemiMajorAU * p.SemiMajorAU
-	periodYears = math.Sqrt(periodYears)
-
-	// Days since J2000 epoch
-	j2000 := time.Date(2000, 1, 1, 12, 0, 0, 0, time.UTC)
-	daysSinceJ2000 := t.Sub(j2000).Hours() / 24
-
-	// Mean anomaly (very rough, ignores eccentricity)
-	meanAnomaly := 2 * math.Pi * (daysSinceJ2000 / (periodYears * 365.25))
-
-	// Simple circular approximation
-	x := p.SemiMajorAU * math.Cos(meanAnomaly)
-	y := p.SemiMajorAU * math.Sin(meanAnomaly)
-
-	return astro.Vec3{X: x, Y: y, Z: 0}
+	return planets
 }
 
 // UpdateSpacecraft updates spacecraft positions from DSN data.
