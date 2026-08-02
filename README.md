@@ -272,6 +272,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.10.0** — Solar system JSON endpoint with heliocentric positions for external consumers, `--serve-dir` to publish data endpoints for a web server, planet positions computed locally so the Orbit view no longer depends on network availability, and far lighter traffic against NASA and JPL. **Breaking:** JSON exports now carry `schema_version`, `complex_loads` keys are snake_case, and unknown range/light-time is `null` rather than `-1`
 - **0.9.1** — Retire completed Artemis II mission profile from spotlight catalog
 - **0.9.0** — Mission Spotlight: curated Artemis II & Voyager 1 profiles with live phase/MET/countdown, crew display, timeline rail, data provenance labels, and graceful handling of unsupported ephemeris lookups
 - **0.8.0** — Signal propagation delay visualizer, ephemeris range/light-time fallback via Horizons
