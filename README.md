@@ -376,6 +376,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.11.1** — Fixed the Linux release binary, which was dynamically linked against a recent glibc and would not start on distributions shipping anything older than glibc 2.34 (Debian 11, Ubuntu 20.04, and similar). It is statically linked again, as documented. Only the Linux download was affected
 - **0.11.0** — Relicensed from MIT to Apache-2.0 (adds an explicit patent grant and a `NOTICE` attribution mechanism; earlier releases remain MIT). Added `THIRD-PARTY-NOTICES` reproducing the license texts of every dependency statically linked into the release binaries, and release archives now ship `LICENSE` and `NOTICE` alongside the binary
 - **0.10.0** — Solar system JSON endpoint with heliocentric positions for external consumers, `--serve-dir` to publish data endpoints for a web server, planet positions computed locally so the Orbit view no longer depends on network availability, and far lighter traffic against NASA and JPL. **Removed:** the in-app update check and installer, which relied on `go install` and so never worked for anyone running a pre-built binary. **Breaking:** JSON exports now carry `schema_version`, `complex_loads` keys are snake_case, and unknown range/light-time is `null` rather than `-1`
 - **0.9.1** — Retire completed Artemis II mission profile from spotlight catalog
