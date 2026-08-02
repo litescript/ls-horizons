@@ -32,7 +32,12 @@ echo "  regenerated THIRD-PARTY-NOTICES"
 build() {
 	local goos="$1" goarch="$2" subdir="$3" binname="$4" archive="$5"
 
-	GOOS="$goos" GOARCH="$goarch" go build -o "$OUT/$subdir/$binname" ./cmd/ls-horizons
+	# CGO_ENABLED=0 keeps the binary statically linked, as the README promises.
+	# Without it the native target inherits cgo from the environment, links
+	# against the build host's glibc, and then refuses to start on any machine
+	# with an older one. The cross-compiled targets disable cgo on their own,
+	# so pinning it here just makes every target behave the same way.
+	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$OUT/$subdir/$binname" ./cmd/ls-horizons
 	echo "  built $OUT/$subdir/$binname"
 
 	# Stage a versioned directory so extracting doesn't scatter LICENSE and
