@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025-2026 Peter Brown (litescript.net)
+
 // Package state provides thread-safe state management for the application.
 package state
 

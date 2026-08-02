@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025-2026 Peter Brown (litescript.net)
+
 // Package ui provides the terminal user interface using Bubble Tea.
 package ui
 
@@ -411,7 +414,7 @@ func (m Model) renderLogo() string {
 	b.WriteString("\n")
 
 	// Version/copyright line
-	b.WriteString(muted.Render(fmt.Sprintf("  (c) 2026 litescript.net | v%s", version.Version)))
+	b.WriteString(muted.Render(fmt.Sprintf("  (c) 2025-2026 litescript.net | v%s", version.Version)))
 	b.WriteString("\n\n")
 
 	return b.String()

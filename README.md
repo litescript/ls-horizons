@@ -376,6 +376,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.11.0** — Relicensed from MIT to Apache-2.0 (adds an explicit patent grant and a `NOTICE` attribution mechanism; earlier releases remain MIT). Added `THIRD-PARTY-NOTICES` reproducing the license texts of every dependency statically linked into the release binaries, and release archives now ship `LICENSE` and `NOTICE` alongside the binary
 - **0.10.0** — Solar system JSON endpoint with heliocentric positions for external consumers, `--serve-dir` to publish data endpoints for a web server, planet positions computed locally so the Orbit view no longer depends on network availability, and far lighter traffic against NASA and JPL. **Removed:** the in-app update check and installer, which relied on `go install` and so never worked for anyone running a pre-built binary. **Breaking:** JSON exports now carry `schema_version`, `complex_loads` keys are snake_case, and unknown range/light-time is `null` rather than `-1`
 - **0.9.1** — Retire completed Artemis II mission profile from spotlight catalog
 - **0.9.0** — Mission Spotlight: curated Artemis II & Voyager 1 profiles with live phase/MET/countdown, crew display, timeline rail, data provenance labels, and graceful handling of unsupported ephemeris lookups
@@ -402,7 +403,26 @@ Contributions welcome! Please:
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+Apache License 2.0 — see [LICENSE](LICENSE) for the full text and [NOTICE](NOTICE)
+for attribution.
+
+If you redistribute ls-horizons, in source or binary form, the license asks you to
+keep the copyright notice, include a copy of the license, carry the `NOTICE` file
+forward, and state that you changed any files you modified.
+
+Releases up to and including **v0.10.0** were published under the MIT License.
+That grant is perpetual and irrevocable, so those versions remain available under
+MIT; **v0.11.0 onward is Apache-2.0**. Both are permissive, so this changes very
+little in practice — it mainly adds an explicit patent grant and a clearer
+attribution mechanism.
+
+### Third-party components
+
+ls-horizons ships as a statically linked binary that incorporates open source
+components under the MIT and BSD-3-Clause licenses. Their copyright notices and
+full license texts are reproduced in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES),
+which is included with every release. Regenerate it with `scripts/gen-notices.sh`
+after changing dependencies.
 
 ## Acknowledgments
 
