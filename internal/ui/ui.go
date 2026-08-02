@@ -3,7 +3,6 @@ package ui
 
 import (
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -44,18 +43,6 @@ type (
 		Error error
 	}
 
-	// updateCheckMsg contains result of version check.
-	updateCheckMsg struct {
-		info version.UpdateInfo
-	}
-
-	// updateInstallMsg contains result of update installation.
-	updateInstallMsg struct {
-		success bool
-		version string
-		err     error
-	}
-
 	// passPlanUpdatedMsg signals pass plan computation completed.
 	passPlanUpdatedMsg struct {
 		spacecraftID int
@@ -87,9 +74,6 @@ type (
 	DashboardOpenMissionMsg struct {
 		SpacecraftID int
 	}
-
-	// statusMsgClearMsg clears the status message after a delay.
-	statusMsgClearMsg struct{}
 )
 
 // Model is the root Bubble Tea model.
@@ -99,16 +83,11 @@ type Model struct {
 	ephemProvider ephem.Provider
 
 	// UI state
-	viewMode           ViewMode
-	width              int
-	height             int
-	ready              bool
-	statusMsg          string // Status message for update checks, etc.
-	statusMsgStartTick int    // animTick when statusMsg was set (for one-time shimmer)
-	statusMsgShimmer   bool   // True if statusMsg should have shimmer effect
-	statusMsgIsUpdate  bool   // True if statusMsg is showing an available update
-	updateVersion      string // Latest version available (for install)
-	animTick           int    // Animation tick for shimmer effects
+	viewMode ViewMode
+	width    int
+	height   int
+	ready    bool
+	animTick int // Animation tick for shimmer effects
 
 	// Sub-models
 	dashboard     DashboardModel
@@ -132,13 +111,8 @@ func New(stateMgr *state.Manager, ephemProvider ephem.Provider) Model {
 		skyView = skyView.SetPathProvider(ephemProvider)
 	}
 
-	// Create solar system cache with Horizons provider if available
-	var solarCache *dsn.SolarSystemCache
-	if hp, ok := ephemProvider.(*ephem.HorizonsProvider); ok {
-		solarCache = dsn.NewSolarSystemCache(hp)
-	} else {
-		solarCache = dsn.NewSolarSystemCache(nil)
-	}
+	// Planet positions are computed locally, so the cache needs no provider.
+	solarCache := dsn.NewSolarSystemCache()
 
 	return Model{
 		state:         stateMgr,
@@ -188,74 +162,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cycle through views
 			m.viewMode = (m.viewMode + 1) % 4
 
-		case "u":
-			m.statusMsg = "Checking for updates..."
-			m.statusMsgIsUpdate = false
-			m.statusMsgShimmer = false // No shimmer for "checking" state
-			cmds = append(cmds, checkForUpdate())
-
-		case "U":
-			// Shift+U to install update (only if update is available)
-			if m.statusMsgIsUpdate && m.updateVersion != "" {
-				m.statusMsg = "Installing update..."
-				m.statusMsgIsUpdate = false
-				m.statusMsgStartTick = m.animTick
-				cmds = append(cmds, installUpdate(m.updateVersion))
-			}
-
 		default:
 			// Pass to active view
 			cmds = append(cmds, m.updateActiveView(msg))
-		}
-
-	case updateCheckMsg:
-		m.statusMsgIsUpdate = false
-		m.updateVersion = ""
-		var clearDelay time.Duration
-
-		if msg.info.Error != nil {
-			m.statusMsg = fmt.Sprintf("Update check failed: %v", msg.info.Error)
-			clearDelay = 5 * time.Second
-		} else if msg.info.UpdateAvailable {
-			m.statusMsg = fmt.Sprintf("Update available: v%s → v%s · Press U to install",
-				msg.info.CurrentVersion, msg.info.LatestVersion)
-			m.statusMsgIsUpdate = true
-			m.updateVersion = msg.info.LatestVersion
-			clearDelay = 15 * time.Second
-		} else {
-			m.statusMsg = fmt.Sprintf("You're on the latest version (v%s)", msg.info.CurrentVersion)
-			clearDelay = 5 * time.Second
-		}
-		// Record start tick and enable shimmer for result
-		m.statusMsgStartTick = m.animTick
-		m.statusMsgShimmer = true
-		// Clear status message after delay
-		cmds = append(cmds, tea.Tick(clearDelay, func(t time.Time) tea.Msg {
-			return statusMsgClearMsg{}
-		}))
-
-	case statusMsgClearMsg:
-		m.statusMsg = ""
-		m.statusMsgIsUpdate = false
-
-	case updateInstallMsg:
-		m.statusMsgStartTick = m.animTick
-		if msg.err != nil {
-			m.statusMsg = fmt.Sprintf("Update failed: %v", msg.err)
-			m.statusMsgIsUpdate = false
-			// Clear after 10 seconds
-			cmds = append(cmds, tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
-				return statusMsgClearMsg{}
-			}))
-		} else {
-			// Success - trigger restart
-			m.statusMsg = fmt.Sprintf("Updated to v%s! Restarting...", msg.version)
-			m.statusMsgIsUpdate = false
-			RestartPending = true
-			// Brief delay to show message, then quit (main.go will exec)
-			cmds = append(cmds, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg {
-				return tea.Quit()
-			}))
 		}
 
 	case tea.WindowSizeMsg:
@@ -288,22 +197,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.missionDetail = m.missionDetail.UpdateData(m.snapshot)
 		m.skyView = m.skyView.UpdateData(m.snapshot)
 
-		// Update solar system cache with DSN data (async to avoid blocking UI)
+		// Update solar system cache with DSN data. Both updates are pure
+		// computation now -- no network, so no goroutine and no partial state.
 		if m.solarCache != nil {
-			// Spacecraft updates are fast (just uses DSN data)
 			if m.solarCache.NeedsSpacecraftRefresh() {
 				_ = m.solarCache.UpdateSpacecraft(m.snapshot.Data)
 			}
-			// Planet updates are slow (HTTP calls) - do async with panic recovery
 			if m.solarCache.NeedsPlanetRefresh() {
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							// Log but don't crash - planet data is non-critical
-						}
-					}()
-					m.solarCache.UpdatePlanets()
-				}()
+				m.solarCache.UpdatePlanets()
 			}
 			solarSnap := m.solarCache.GetSnapshot()
 			m.solarSystem = m.solarSystem.UpdateData(m.snapshot, solarSnap)
@@ -509,20 +410,8 @@ func (m Model) renderLogo() string {
 	b.WriteString(muted.Render("  Deep Space Network · Real-time Visualization"))
 	b.WriteString("\n")
 
-	// Version/copyright line with dynamic update status
-	baseInfo := fmt.Sprintf("  (c) 2026 litescript.net | v%s | ", version.Version)
-	b.WriteString(muted.Render(baseInfo))
-	if m.statusMsg != "" {
-		if m.statusMsgShimmer {
-			// Show result with one-time fast shimmer effect (gold for updates)
-			b.WriteString(m.renderOneTimeShimmer(m.statusMsg, m.statusMsgStartTick, m.statusMsgIsUpdate))
-		} else {
-			// Show "checking" state without shimmer
-			b.WriteString(muted.Render(m.statusMsg))
-		}
-	} else {
-		b.WriteString(muted.Render("[u]check update"))
-	}
+	// Version/copyright line
+	b.WriteString(muted.Render(fmt.Sprintf("  (c) 2026 litescript.net | v%s", version.Version)))
 	b.WriteString("\n\n")
 
 	return b.String()
@@ -678,25 +567,6 @@ func animTickCmd() tea.Cmd {
 	})
 }
 
-func checkForUpdate() tea.Cmd {
-	return func() tea.Msg {
-		info := version.CheckForUpdate()
-		return updateCheckMsg{info: info}
-	}
-}
-
-func installUpdate(targetVersion string) tea.Cmd {
-	return func() tea.Msg {
-		// Run go install to get the latest version
-		cmd := exec.Command("go", "install", "github.com/litescript/ls-horizons/cmd/ls-horizons@latest")
-		err := cmd.Run()
-		if err != nil {
-			return updateInstallMsg{success: false, version: targetVersion, err: err}
-		}
-		return updateInstallMsg{success: true, version: targetVersion, err: nil}
-	}
-}
-
 // SendDataUpdate creates a command that sends a data update message.
 func SendDataUpdate(snapshot state.Snapshot) tea.Cmd {
 	return func() tea.Msg {
@@ -709,83 +579,6 @@ func SendError(err error) tea.Cmd {
 	return func() tea.Msg {
 		return ErrorMsg{Error: err}
 	}
-}
-
-// renderOneTimeShimmer renders text with a single fast shimmer sweep, then static.
-// If isUpdate is true, uses gold/amber colors instead of purple.
-func (m Model) renderOneTimeShimmer(text string, startTick int, isUpdate bool) string {
-	runes := []rune(text)
-	textLen := len(runes)
-	if textLen == 0 {
-		return ""
-	}
-
-	// Calculate elapsed ticks since animation started
-	elapsed := m.animTick - startTick
-
-	// Speed: move 4 characters per tick for very fast sweep
-	pos := elapsed * 4
-
-	// Color schemes
-	var finalR, finalG, finalB float64 // Final revealed color
-	var dimR, dimG, dimB float64       // Dim unrevealed color
-
-	if isUpdate {
-		// Gold/amber for updates: #F6AD55 (246, 173, 85)
-		finalR, finalG, finalB = 246, 173, 85
-		dimR, dimG, dimB = 110, 90, 60
-	} else {
-		// Purple for normal: #B794F4 (183, 148, 244)
-		finalR, finalG, finalB = 183, 148, 244
-		dimR, dimG, dimB = 90, 80, 110
-	}
-
-	// After sweep completes, render static in final color
-	sweepEnd := textLen + 6
-	if pos > sweepEnd {
-		hexColor := fmt.Sprintf("#%02X%02X%02X", int(finalR), int(finalG), int(finalB))
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
-		return style.Render(text)
-	}
-
-	var result strings.Builder
-
-	for i, r := range runes {
-		// Distance from shimmer center (negative = already passed)
-		dist := float64(i) - float64(pos) + 3.0
-
-		var rf, gf, bf float64
-
-		if dist < -4 {
-			// Fully revealed - final color
-			rf, gf, bf = finalR, finalG, finalB
-		} else if dist < 0 {
-			// Transition from white highlight back to final color (trailing glow)
-			t := -dist / 4.0 // 0 at highlight, 1 at fully revealed
-			rf = 255 - t*(255-finalR)
-			gf = 255 - t*(255-finalG)
-			bf = 255 - t*(255-finalB)
-		} else if dist < 1 {
-			// Peak highlight - white
-			rf, gf, bf = 255, 255, 255
-		} else if dist < 6 {
-			// Leading edge - fade from white to dim
-			t := (dist - 1) / 5.0 // 0 at highlight, 1 at dim
-			rf = 255 - t*(255-dimR)
-			gf = 255 - t*(255-dimG)
-			bf = 255 - t*(255-dimB)
-		} else {
-			// Not yet revealed - dim
-			rf, gf, bf = dimR, dimG, dimB
-		}
-
-		r8, g8, b8 := int(rf), int(gf), int(bf)
-		hexColor := fmt.Sprintf("#%02X%02X%02X", r8, g8, b8)
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color(hexColor))
-		result.WriteString(style.Render(string(r)))
-	}
-
-	return result.String()
 }
 
 // renderShimmerText renders text with a subtle moving shine effect.

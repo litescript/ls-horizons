@@ -84,7 +84,7 @@ func TestSnapshotExport_WriteJSON(t *testing.T) {
 			{
 				Spacecraft:    "Mars Orbiter",
 				DataRate:      100000,
-				Distance:      200e6,
+				Distance:      positiveOrNil(200e6),
 				StruggleIndex: 0.45,
 				Health:        "MARGINAL",
 			},
