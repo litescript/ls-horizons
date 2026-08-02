@@ -37,8 +37,19 @@ build() {
 	# against the build host's glibc, and then refuses to start on any machine
 	# with an older one. The cross-compiled targets disable cgo on their own,
 	# so pinning it here just makes every target behave the same way.
-	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -o "$OUT/$subdir/$binname" ./cmd/ls-horizons
-	echo "  built $OUT/$subdir/$binname"
+	#
+	# -trimpath rewrites embedded source paths to their module-relative form.
+	# Without it every release binary carries the absolute paths of whoever's
+	# machine built it, which is both noise and a small privacy leak, and it
+	# makes two builds of the same commit differ for no useful reason.
+	#
+	# -s -w drops the symbol table and DWARF, cutting roughly a third of the
+	# size. Panic tracebacks survive this: Go resolves them from its own
+	# pclntab, not from DWARF. Only external debuggers lose out, and they
+	# should be pointed at a locally built binary anyway.
+	CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+		go build -trimpath -ldflags "-s -w" -o "$OUT/$subdir/$binname" ./cmd/ls-horizons
+	echo "  built $OUT/$subdir/$binname ($(du -h "$OUT/$subdir/$binname" | cut -f1))"
 
 	# Stage a versioned directory so extracting doesn't scatter LICENSE and
 	# NOTICE into the user's working directory.
