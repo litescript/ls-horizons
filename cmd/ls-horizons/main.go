@@ -179,12 +179,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Check if we should restart (after in-app update)
-	if err := ui.DoRestart(); err != nil {
-		fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
-		os.Exit(1)
-	}
 }
 
 func runFetchLoop(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, p *tea.Program, logger *logging.Logger) {
