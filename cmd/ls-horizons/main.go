@@ -22,23 +22,36 @@ import (
 
 // CLI flags for headless mode
 var (
-	summaryMode   bool
-	watchInterval time.Duration
-	snapshotPath  string
-	miniSkyMode   bool
-	nowMode       bool
-	scName        string
-	diffMode      bool
-	beepMode      bool
-	eventsMode    bool
-	ephemMode     string
-	logFile       string
+	summaryMode       bool
+	watchInterval     time.Duration
+	snapshotPath      string
+	solarSnapshotPath string
+	serveDir          string
+	miniSkyMode       bool
+	nowMode           bool
+	scName            string
+	diffMode          bool
+	beepMode          bool
+	eventsMode        bool
+	ephemMode         string
+	logFile           string
 )
 
 const (
 	defaultRefresh = 5 * time.Second
 	minRefresh     = 1 * time.Second
 	maxRefresh     = 5 * time.Minute
+
+	// RecommendedServeInterval is the suggested cadence for a 24/7 daemon. The
+	// DSN feed regenerates about every five seconds, but a station handoff plays
+	// out over hours and planets are computed locally, so a minute is ample
+	// freshness for a served endpoint. Polling a public NASA feed around the
+	// clock warrants restraint, not the interactive default.
+	RecommendedServeInterval = 60 * time.Second
+
+	// minServeInterval floors the daemon cadence. Nothing this app renders
+	// changes fast enough to justify hammering the feed from a server.
+	minServeInterval = 10 * time.Second
 )
 
 func main() {
@@ -47,7 +60,9 @@ func main() {
 	logLevel := flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	flag.BoolVar(&summaryMode, "summary", false, "Print text summary instead of TUI")
 	flag.DurationVar(&watchInterval, "watch", 0, "Repeat fetch at interval (e.g., 30s)")
-	flag.StringVar(&snapshotPath, "snapshot-path", "", "Export JSON snapshot to file (use - for stdout)")
+	flag.StringVar(&snapshotPath, "snapshot-path", "", "Export DSN JSON snapshot to file (use - for stdout)")
+	flag.StringVar(&solarSnapshotPath, "solar-snapshot-path", "", "Export solar system JSON (heliocentric positions) to file (use - for stdout)")
+	flag.StringVar(&serveDir, "serve-dir", "", "Write dsn.json and solarsystem.json into a directory for a web server to serve")
 	flag.BoolVar(&miniSkyMode, "mini-sky", false, "Show ASCII mini sky view")
 	flag.BoolVar(&nowMode, "now", false, "Single-line now-playing mode")
 	flag.StringVar(&scName, "sc", "", "Show card for specific spacecraft")
@@ -107,8 +122,10 @@ func main() {
 	fetcher := dsn.NewFetcher()
 
 	// Headless mode: no TUI
-	headless := summaryMode || snapshotPath != "" || miniSkyMode || nowMode || scName != "" || diffMode || eventsMode
+	headless := summaryMode || snapshotPath != "" || solarSnapshotPath != "" || serveDir != "" ||
+		miniSkyMode || nowMode || scName != "" || diffMode || eventsMode
 	if headless {
+		applyHeadlessDefaults(refreshWasSet())
 		runHeadless(ctx, fetcher, stateMgr, logger)
 		return
 	}
@@ -253,6 +270,40 @@ func doFetch(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager,
 	p.Send(ui.DataUpdateMsg{Snapshot: stateMgr.Snapshot()})
 }
 
+// refreshWasSet reports whether the user explicitly passed --refresh.
+func refreshWasSet() bool {
+	var set bool
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "refresh" {
+			set = true
+		}
+	})
+	return set
+}
+
+// applyHeadlessDefaults resolves the headless poll cadence and warns about flags
+// that do not apply, rather than letting them be silently ignored.
+func applyHeadlessDefaults(refreshSet bool) {
+	// --refresh drives the TUI's fetch loop only; headless cadence is --watch.
+	// Silently ignoring it made "--refresh 60s" look like it worked.
+	if refreshSet {
+		fmt.Fprintln(os.Stderr,
+			"Note: --refresh applies to the interactive TUI; headless cadence is set by --watch.")
+	}
+
+	// --serve-dir writes once and exits, like every other headless mode. Pass
+	// --watch to run it as a long-lived daemon. Keeping these orthogonal means
+	// the same binary drops into either a systemd timer or a resident service
+	// without the flag quietly changing what kind of process you started.
+	if serveDir != "" && watchInterval > 0 && watchInterval < minServeInterval {
+		fmt.Fprintf(os.Stderr,
+			"Note: raising --watch from %s to %s. This polls a public NASA feed continuously;\n"+
+				"      nothing rendered here changes fast enough to justify a shorter interval.\n",
+			watchInterval, minServeInterval)
+		watchInterval = minServeInterval
+	}
+}
+
 // runHeadless handles all headless modes without starting TUI.
 func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, logger *logging.Logger) {
 	var prevData *dsn.DSNData
@@ -292,22 +343,26 @@ func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Mana
 			return nil
 		}
 
-		// Export JSON if requested
+		// Publish both endpoint files for a web server to serve.
+		if serveDir != "" {
+			if err := writeServeFiles(serveDir, snap.Data, snap.LastFetch); err != nil {
+				return err
+			}
+		}
+
+		// Export DSN JSON if requested
 		if snapshotPath != "" {
 			export := dsn.ExportSnapshot(snap.Data, snap.LastFetch)
-			if snapshotPath == "-" {
-				if err := export.WriteJSON(os.Stdout); err != nil {
-					return fmt.Errorf("write JSON to stdout: %w", err)
-				}
-			} else {
-				f, err := os.Create(snapshotPath)
-				if err != nil {
-					return fmt.Errorf("create snapshot file: %w", err)
-				}
-				defer f.Close()
-				if err := export.WriteJSON(f); err != nil {
-					return fmt.Errorf("write JSON to file: %w", err)
-				}
+			if err := writeJSONTarget(snapshotPath, export.WriteJSON); err != nil {
+				return err
+			}
+		}
+
+		// Export solar system JSON if requested
+		if solarSnapshotPath != "" {
+			solar := dsn.ExportSolarSystem(dsn.BuildSolarSystemSnapshot(snap.Data, snap.LastFetch))
+			if err := writeJSONTarget(solarSnapshotPath, solar.WriteJSON); err != nil {
+				return err
 			}
 		}
 
@@ -358,16 +413,17 @@ func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Mana
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 	}
 
-	ticker := time.NewTicker(watchInterval)
-	defer ticker.Stop()
-
+	// A jittered timer rather than a fixed ticker, so long-running instances
+	// don't converge on the same poll instant. See jitteredInterval.
 	for {
+		timer := time.NewTimer(jitteredInterval(watchInterval))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
-			if !diffMode && !nowMode {
-				fmt.Println() // Blank line between outputs (except diff/now mode)
+		case <-timer.C:
+			if !diffMode && !nowMode && serveDir == "" {
+				fmt.Println() // Blank line between outputs (except diff/now/serve mode)
 			}
 			if err := outputOnce(); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
