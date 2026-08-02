@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025-2026 Peter Brown (litescript.net)
+
 package ephem
 
 import (

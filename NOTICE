@@ -1,0 +1,18 @@
+ls-horizons
+Copyright 2025-2026 Peter Brown (litescript.net)
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file for the
+full license text.
+
+This product incorporates third-party open source software. Their copyright
+notices and license texts are reproduced in THIRD-PARTY-NOTICES, which is
+distributed alongside every release binary.
+
+Data displayed by this software is sourced from public services operated by
+NASA and NASA/JPL-Caltech:
+
+  - NASA Deep Space Network Now (eyes.nasa.gov/dsn)
+  - JPL Horizons System (ssd.jpl.nasa.gov)
+
+Those data are not covered by this license, and this project is not affiliated
+with, endorsed by, or sponsored by NASA or JPL.

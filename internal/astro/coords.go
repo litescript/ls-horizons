@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025-2026 Peter Brown (litescript.net)
+
 // Package astro provides astronomical coordinate transformations and sky math.
 package astro
 

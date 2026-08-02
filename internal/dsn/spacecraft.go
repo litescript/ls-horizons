@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025-2026 Peter Brown (litescript.net)
+
 // Package dsn spacecraft catalog with full names and metadata.
 package dsn
 

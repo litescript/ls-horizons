@@ -1,8 +1,11 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2025-2026 Peter Brown (litescript.net)
+
 // Package version provides build and version information.
 package version
 
 // Version is the current application version.
-const Version = "0.10.0"
+const Version = "0.11.0"
 
 // ProjectURL is the canonical home of this project, included in the User-Agent
 // so upstream data providers can identify and contact the operator of a client.
@@ -17,6 +20,7 @@ func UserAgent() string {
 }
 
 // Milestones:
+// 0.11.0 - Relicense to Apache-2.0, third-party attribution notices
 // 0.10.0 - Solar system JSON endpoint, --serve-dir publishing, locally computed planet positions
 // 0.9.1 - Retire completed Artemis II mission profile from spotlight catalog
 // 0.9.0 - Mission Spotlight: curated profiles (Artemis II, Voyager 1), data provenance, graceful gating
