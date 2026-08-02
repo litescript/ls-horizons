@@ -4,6 +4,18 @@ package version
 // Version is the current application version.
 const Version = "0.9.1"
 
+// ProjectURL is the canonical home of this project, included in the User-Agent
+// so upstream data providers can identify and contact the operator of a client.
+const ProjectURL = "https://github.com/litescript/ls-horizons"
+
+// UserAgent returns the HTTP User-Agent this client presents to upstream data
+// providers (NASA DSN, JPL Horizons). Identifying the client honestly, with a
+// contactable project URL, is a condition of being a good citizen on public
+// science APIs: it lets an operator reach out rather than silently block.
+func UserAgent() string {
+	return "ls-horizons/" + Version + " (+" + ProjectURL + ")"
+}
+
 // Milestones:
 // 0.9.1 - Retire completed Artemis II mission profile from spotlight catalog
 // 0.9.0 - Mission Spotlight: curated profiles (Artemis II, Voyager 1), data provenance, graceful gating

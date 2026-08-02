@@ -3,7 +3,6 @@ package ephem
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -141,19 +140,9 @@ func (p *HorizonsProvider) queryHorizons(target TargetID, start, end time.Time, 
 
 	reqURL := HorizonsAPIURL + "?" + params.Encode()
 
-	resp, err := p.client.Get(reqURL)
+	body, err := horizonsGate.get(p.client, reqURL)
 	if err != nil {
-		return EphemerisPath{}, fmt.Errorf("horizons request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return EphemerisPath{}, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return EphemerisPath{}, fmt.Errorf("horizons returned status %d (service may be unavailable)", resp.StatusCode)
+		return EphemerisPath{}, err
 	}
 
 	return parseHorizonsResponse(target, body, obs)
@@ -390,19 +379,9 @@ func (p *HorizonsProvider) queryRADec(target TargetID, start, end time.Time, ste
 
 	reqURL := HorizonsAPIURL + "?" + params.Encode()
 
-	resp, err := p.client.Get(reqURL)
+	body, err := horizonsGate.get(p.client, reqURL)
 	if err != nil {
-		return nil, fmt.Errorf("horizons RA/Dec request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("horizons returned status %d (service may be unavailable)", resp.StatusCode)
+		return nil, err
 	}
 
 	return parseRADecResponse(body)
