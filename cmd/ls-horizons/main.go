@@ -38,9 +38,16 @@ var (
 )
 
 const (
+	// defaultRefresh matches the cadence of NASA's own DSN Now web client, which
+	// is the reference for what this feed expects from an interactive viewer.
 	defaultRefresh = 5 * time.Second
-	minRefresh     = 1 * time.Second
-	maxRefresh     = 5 * time.Minute
+
+	// minRefresh is floored at the feed's own regeneration period. The DSN XML
+	// is rebuilt about every five seconds, so polling faster cannot surface
+	// newer data -- it just spends requests to be told nothing changed.
+	minRefresh = 5 * time.Second
+
+	maxRefresh = 5 * time.Minute
 
 	// RecommendedServeInterval is the suggested cadence for a 24/7 daemon. The
 	// DSN feed regenerates about every five seconds, but a station handoff plays

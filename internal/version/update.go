@@ -37,7 +37,7 @@ func CheckForUpdate() UpdateInfo {
 	}
 
 	// Use releases/latest endpoint for the most recent release
-	resp, err := client.Get("https://api.github.com/repos/litescript/ls-horizons/releases/latest")
+	resp, err := getWithUserAgent(client, "https://api.github.com/repos/litescript/ls-horizons/releases/latest")
 	if err != nil {
 		info.Error = fmt.Errorf("failed to check for updates: %w", err)
 		return info
@@ -63,7 +63,7 @@ func CheckForUpdate() UpdateInfo {
 
 // checkForUpdateViaTags falls back to checking tags if no releases exist.
 func checkForUpdateViaTags(info UpdateInfo, client *http.Client) UpdateInfo {
-	resp, err := client.Get("https://api.github.com/repos/litescript/ls-horizons/tags")
+	resp, err := getWithUserAgent(client, "https://api.github.com/repos/litescript/ls-horizons/tags")
 	if err != nil {
 		info.Error = fmt.Errorf("failed to check for updates: %w", err)
 		return info
@@ -91,6 +91,18 @@ func checkForUpdateViaTags(info UpdateInfo, client *http.Client) UpdateInfo {
 	info.UpdateAvailable = isNewerVersion(info.LatestVersion, info.CurrentVersion)
 
 	return info
+}
+
+// getWithUserAgent issues a GET carrying our identifying User-Agent. GitHub
+// asks API clients to identify themselves, and it costs nothing to comply.
+func getWithUserAgent(client *http.Client, url string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", UserAgent())
+	req.Header.Set("Accept", "application/vnd.github+json")
+	return client.Do(req)
 }
 
 // normalizeVersion strips the "v" prefix if present.
