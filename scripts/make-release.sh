@@ -52,18 +52,24 @@ build() {
 	echo "  built $OUT/$subdir/$binname ($(du -h "$OUT/$subdir/$binname" | cut -f1))"
 
 	# Stage a versioned directory so extracting doesn't scatter LICENSE and
-	# NOTICE into the user's working directory.
+	# NOTICE into the user's working directory. The platform belongs in that
+	# directory name as well as in the archive name: without it, every platform
+	# unpacks to the same path, and anyone fetching two of them into one folder
+	# silently overwrites one binary with another for a different architecture.
+	# Naming it after the archive keeps what you download and what you get in
+	# sync.
+	local top="ls-horizons-v${VERSION}-${subdir}"
 	local stage
 	stage="$(mktemp -d)"
-	local dir="$stage/ls-horizons-v${VERSION}"
+	local dir="$stage/$top"
 	mkdir -p "$dir"
 	cp "$OUT/$subdir/$binname" "$dir/"
 	cp "${LEGAL[@]}" "$dir/"
 
 	rm -f "$OUT/$archive"
 	case "$archive" in
-		*.zip) (cd "$stage" && zip -qr "$OLDPWD/$OUT/$archive" "ls-horizons-v${VERSION}") ;;
-		*)     tar czf "$OUT/$archive" -C "$stage" "ls-horizons-v${VERSION}" ;;
+		*.zip) (cd "$stage" && zip -qr "$OLDPWD/$OUT/$archive" "$top") ;;
+		*)     tar czf "$OUT/$archive" -C "$stage" "$top" ;;
 	esac
 	rm -rf "$stage"
 	echo "  packaged $OUT/$archive"
