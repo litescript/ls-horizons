@@ -545,9 +545,14 @@ full license texts are reproduced in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES),
 which is included with every release. Regenerate it with `scripts/gen-notices.sh`
 after changing dependencies.
 
+The binary also embeds a processed subset of the Bright Star Catalogue, which is
+credited in the same file and in [NOTICE](NOTICE). Unlike the DSN and Horizons
+feeds, which are fetched at runtime, this data is redistributed inside the
+binary, so the attribution travels with every copy.
+
 ## Acknowledgments
 
 - NASA/JPL for the public DSN data feed and Horizons ephemeris system
-- Yale Bright Star Catalog for star position data
+- Dorrit Hoffleit and Wayne H. Warren Jr. for the Bright Star Catalogue (Astronomical Data Center, NSSDC/ADC, 1991), the source of every star this renders
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the excellent TUI framework
 - [Lip Gloss](https://github.com/charmbracelet/lipgloss) for terminal styling
