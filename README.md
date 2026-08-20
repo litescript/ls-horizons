@@ -202,9 +202,10 @@ This produces three files:
 | `stars.json` | The naked-eye star catalog as celestial-sphere directions | Never |
 
 `solarsystem.json` uses **J2000 heliocentric ecliptic coordinates in AU** with the
-Sun at the origin and the ecliptic as the XY plane, so the coordinates drop
-straight into a 3D scene without any frame conversion. Each body reports whether
-its position came from local orbital propagation or live DSN tracking.
+Sun at the origin and the ecliptic as the XY plane — no astronomical frame
+conversion needed, only whatever basis change your renderer's own axis
+convention calls for. Each body reports whether its position came from local
+orbital propagation or live DSN tracking.
 
 Note that a spacecraft only appears in `solarsystem.json` when the DSN feed
 publishes a ranging solution for it. The feed often reports `-1` across every
@@ -236,7 +237,13 @@ direction precomputed as unit vectors in two frames:
 - `equatorial` — right-handed, `+X` toward the vernal equinox, `+Z` toward the
   north celestial pole.
 - `ecliptic` — right-handed, sharing `+X` with the equatorial frame, `+Z`
-  toward the north ecliptic pole. This is the frame `solarsystem.json` uses.
+  toward the north ecliptic pole. This is the frame `solarsystem.json` uses, so
+  the same one transformation places the stars and the planets consistently.
+
+Those are the published frames, and they are the standard astronomical ones.
+Mapping either onto a particular engine's axes — three.js's Y-up scene, say — is
+a consumer-side basis transformation, not part of what ls-horizons defines;
+[deploy/README.md](deploy/README.md) works one through as an example.
 
 **These are directions, not positions.** The vectors are unit length and carry
 no distance, deliberately: this is a celestial-sphere catalog, not a local map

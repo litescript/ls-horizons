@@ -37,17 +37,23 @@ const AU = 50; // scene units per AU
 for (const body of data.bodies) {
   mesh(body.code).position.set(
     body.position.x * AU,
-    body.position.z * AU,  // three.js is Y-up; ecliptic Z becomes scene Y
-   -body.position.y * AU,  // negated, see "Axis convention" below
+    body.position.z * AU,  // scene is Y-up; ecliptic Z becomes scene Y
+   -body.position.y * AU,  // see "Frame convention" below
   );
 }
 ```
 
-### Axis convention
+### Frame convention, and adapting it to a scene
 
-Both payloads use a right-handed J2000 ecliptic frame: `+X` toward the vernal
-equinox, `+Z` toward the north ecliptic pole. three.js is also right-handed but
-Y-up, so the mapping is:
+**What ls-horizons publishes.** Both payloads use a right-handed J2000 ecliptic
+frame: `+X` toward the vernal equinox, `+Z` toward the north ecliptic pole.
+`solarsystem.json` gives heliocentric positions in AU within that frame;
+`stars.json` gives unit direction vectors in the same orientation. That is the
+whole of the coordinate convention, and it is the standard astronomical one.
+
+**What the code below does is a consumer-side adapter, not part of that
+convention.** The example assumes a Y-up, right-handed three.js scene in which
+ecliptic north maps to `+Y`. Under that assumption:
 
 ```
 scene.x =  ecliptic.x
@@ -55,11 +61,16 @@ scene.y =  ecliptic.z
 scene.z = -ecliptic.y
 ```
 
-The negation is not cosmetic. Mapping straight to `(x, z, y)` swaps two axes,
-which flips the handedness and renders the whole scene mirror-imaged: orbits run
-backwards and, once you add `stars.json`, every constellation comes out
-reversed. Use the same mapping for both payloads — mixing conventions puts the
-planets and the sky in different universes.
+The sign inversion preserves handedness after remapping the astronomical Z axis
+onto three.js's Y. Dropping it — mapping straight to `(x, z, y)` — swaps two
+axes of a right-handed frame, which flips the handedness and renders the scene
+mirror-imaged: orbits run backwards, and once `stars.json` joins them every
+constellation comes out reversed.
+
+A renderer with different conventions should derive its own basis transformation
+from the published frame rather than copying this one. Whichever you choose,
+apply the same transformation to both payloads — mixing them puts the planets
+and the sky in different universes.
 
 Each body carries a `source` field: `keplerian` for locally propagated planetary
 orbits, `dsn` for live-tracked spacecraft, `static` for the Sun.
@@ -91,8 +102,9 @@ header @stars Cache-Control "public, max-age=31536000, immutable"
 ```
 
 Each record carries `ra_deg` and `dec_deg` for J2000, plus the same direction
-precomputed as unit vectors in the `equatorial` and `ecliptic` frames. Use
-`ecliptic` and the mapping above and the sky lines up with the planets.
+precomputed as unit vectors in the `equatorial` and `ecliptic` frames. Take
+`ecliptic` and put it through the same scene adapter you used for the planets,
+and the sky lines up with them.
 
 **The vectors carry no distance.** They are unit length: this is a catalog of
 directions on the celestial sphere, not a 3D map of where stars actually are.
@@ -117,7 +129,8 @@ const colors    = new Float32Array(data.count * 3);
 const sizes     = new Float32Array(data.count);
 
 data.stars.forEach((s, i) => {
-  // Ecliptic (right-handed, Z to the north ecliptic pole) -> three.js Y-up.
+  // Same consumer-side adapter as the planets: ecliptic (right-handed,
+  // Z to the north ecliptic pole) into this Y-up scene.
   positions[i * 3 + 0] =  s.ecliptic.x * R;
   positions[i * 3 + 1] =  s.ecliptic.z * R;
   positions[i * 3 + 2] = -s.ecliptic.y * R;
