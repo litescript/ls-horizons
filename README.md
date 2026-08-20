@@ -267,18 +267,48 @@ client that wants a lighter payload can simply stop reading early.
 
 ```json
 {
-  "name": "Sirius",
-  "catalog_id": "HR 2491",
-  "designation": "9Alp CMa",
-  "ra_deg": 101.28708,
-  "dec_deg": -16.71611,
-  "mag": -1.46,
-  "bv": 0,
-  "spectral_type": "A1Vm",
-  "equatorial": { "x": -0.187454, "y": 0.939218, "z": -0.28763 },
-  "ecliptic":   { "x": -0.187454, "y": 0.747303, "z": -0.637495 }
+  "schema": "ls-horizons/stars",
+  "schema_version": "1.0",
+  "generator": "ls-horizons/0.12.0",
+  "epoch": "J2000",
+  "frames": {
+    "equatorial": "equatorial-J2000",
+    "ecliptic": "ecliptic-J2000"
+  },
+  "magnitude_limit": 6.5,
+  "count": 8404,
+  "source": {
+    "catalog": "Bright Star Catalogue, 5th Revised Ed. (Preliminary Version)",
+    "reference": "Hoffleit D., Warren Jr W.H., Astronomical Data Center, NSSDC/ADC (1991)",
+    "id": "VizieR V/50",
+    "url": "https://cdsarc.cds.unistra.fr/ftp/V/50/"
+  },
+  "stars": [
+    {
+      "name": "Sirius",
+      "catalog_id": "HR 2491",
+      "designation": "9Alp CMa",
+      "ra_deg": 101.28708,
+      "dec_deg": -16.71611,
+      "mag": -1.46,
+      "bv": 0,
+      "spectral_type": "A1Vm",
+      "equatorial": { "x": -0.187454, "y": 0.939218, "z": -0.28763 },
+      "ecliptic":   { "x": -0.187454, "y": 0.747303, "z": -0.637495 }
+    }
+  ]
 }
 ```
+
+`schema_version` is independent of the one `dsn.json` and `solarsystem.json`
+carry. Those track a live upstream feed; this describes a frozen catalog, and
+tying them together would force version bumps on payloads that had not changed.
+Check it the same way: refuse a major version you do not understand.
+
+`name`, `designation`, `spectral_type`, and `catalog_id` are omitted when absent
+rather than emitted empty. `bv` is the exception — it is always present, and
+`null` when the catalog has no photometry, because B−V of exactly `0` is a real
+measurement and must not be confused with a missing one.
 
 See [deploy/README.md](deploy/README.md) for a systemd unit, a Caddy config, and
 a three.js consumption example.
@@ -465,6 +495,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.12.0** — New `stars.json` data endpoint publishing the naked-eye sky as a static payload for 3D clients: 8,404 stars to magnitude 6.5, each with J2000 RA/Dec, precomputed unit vectors in the equatorial and ecliptic frames, B−V colour index, and spectral type. The built-in star catalog is now imported from the Yale Bright Star Catalogue rather than maintained by hand, correcting duplicated and mispositioned entries the old table carried, and the sky views draw from the same source. Added `--stars-path` for a one-shot export; `--serve-dir` now publishes `stars.json` alongside the other two, written once at startup and adding no upstream traffic
 - **0.11.1** — Fixed the Linux release binary, which was dynamically linked against a recent glibc and would not start on distributions shipping anything older than glibc 2.34 (Debian 11, Ubuntu 20.04, and similar). It is statically linked again, as documented. Only the Linux download was affected
 - **0.11.0** — Relicensed from MIT to Apache-2.0 (adds an explicit patent grant and a `NOTICE` attribution mechanism; earlier releases remain MIT). Added `THIRD-PARTY-NOTICES` reproducing the license texts of every dependency statically linked into the release binaries, and release archives now ship `LICENSE` and `NOTICE` alongside the binary
 - **0.10.0** — Solar system JSON endpoint with heliocentric positions for external consumers, `--serve-dir` to publish data endpoints for a web server, planet positions computed locally so the Orbit view no longer depends on network availability, and far lighter traffic against NASA and JPL. **Removed:** the in-app update check and installer, which relied on `go install` and so never worked for anyone running a pre-built binary. **Breaking:** JSON exports now carry `schema_version`, `complex_loads` keys are snake_case, and unknown range/light-time is `null` rather than `-1`
