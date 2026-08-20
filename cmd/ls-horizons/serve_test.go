@@ -226,3 +226,120 @@ func TestWriteServeFilesPublishesBothEndpoints(t *testing.T) {
 		}
 	}
 }
+
+// TestWriteStarsFilePublishesStaticCatalog covers the static endpoint, which is
+// published on its own path rather than through writeServeFiles.
+func TestWriteStarsFilePublishesStaticCatalog(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "web")
+
+	if err := writeStarsFile(dir); err != nil {
+		t.Fatalf("writeStarsFile: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, starsEndpointFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", starsEndpointFile, err)
+	}
+
+	var parsed struct {
+		Schema        string `json:"schema"`
+		SchemaVersion string `json:"schema_version"`
+		Epoch         string `json:"epoch"`
+		Count         int    `json:"count"`
+		Stars         []struct {
+			Name string `json:"name"`
+		} `json:"stars"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("%s is not valid JSON: %v", starsEndpointFile, err)
+	}
+
+	if parsed.Schema != "ls-horizons/stars" {
+		t.Errorf("schema = %q, want ls-horizons/stars", parsed.Schema)
+	}
+	if parsed.SchemaVersion == "" {
+		t.Error("stars.json is missing schema_version")
+	}
+	if parsed.Epoch != "J2000" {
+		t.Errorf("epoch = %q, want J2000", parsed.Epoch)
+	}
+	if parsed.Count == 0 || len(parsed.Stars) != parsed.Count {
+		t.Errorf("count = %d, len(stars) = %d", parsed.Count, len(parsed.Stars))
+	}
+}
+
+// TestWriteServeFilesLeavesStarsAlone is the regression guard for the whole
+// point of splitting the two writers: a poll must not touch stars.json. If the
+// static payload ever gets folded back into writeServeFiles, a --watch daemon
+// starts rewriting an immutable file every interval.
+func TestWriteServeFilesLeavesStarsAlone(t *testing.T) {
+	dir := t.TempDir()
+	starsFile := filepath.Join(dir, starsEndpointFile)
+
+	if err := writeStarsFile(dir); err != nil {
+		t.Fatalf("writeStarsFile: %v", err)
+	}
+
+	before, err := os.Stat(starsFile)
+	if err != nil {
+		t.Fatalf("stat stars.json: %v", err)
+	}
+	original, err := os.ReadFile(starsFile)
+	if err != nil {
+		t.Fatalf("read stars.json: %v", err)
+	}
+
+	// Several polls, as a watch loop would do.
+	for i := 0; i < 3; i++ {
+		if err := writeServeFiles(dir, nil, time.Now()); err != nil {
+			t.Fatalf("writeServeFiles: %v", err)
+		}
+	}
+
+	after, err := os.Stat(starsFile)
+	if err != nil {
+		t.Fatalf("stat stars.json after polls: %v", err)
+	}
+
+	// atomicWriteFile renames a fresh temp file into place, so a rewrite
+	// changes the inode and the modification time even when the bytes match.
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("stars.json was rewritten by a poll: mtime %s -> %s",
+			before.ModTime(), after.ModTime())
+	}
+
+	current, err := os.ReadFile(starsFile)
+	if err != nil {
+		t.Fatalf("re-read stars.json: %v", err)
+	}
+	if !bytes.Equal(original, current) {
+		t.Error("stars.json contents changed across polls")
+	}
+}
+
+// TestWriteStarsFileIsByteStable pins the static payload's determinism at the
+// file level: republishing must produce identical bytes so a served ETag stays
+// valid across a restart.
+func TestWriteStarsFileIsByteStable(t *testing.T) {
+	dirA, dirB := t.TempDir(), t.TempDir()
+
+	if err := writeStarsFile(dirA); err != nil {
+		t.Fatalf("writeStarsFile A: %v", err)
+	}
+	if err := writeStarsFile(dirB); err != nil {
+		t.Fatalf("writeStarsFile B: %v", err)
+	}
+
+	a, err := os.ReadFile(filepath.Join(dirA, starsEndpointFile))
+	if err != nil {
+		t.Fatalf("read A: %v", err)
+	}
+	b, err := os.ReadFile(filepath.Join(dirB, starsEndpointFile))
+	if err != nil {
+		t.Fatalf("read B: %v", err)
+	}
+
+	if !bytes.Equal(a, b) {
+		t.Error("two writes of the static star catalog differ")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 
+	"github.com/litescript/ls-horizons/internal/astro"
 	"github.com/litescript/ls-horizons/internal/dsn"
 	"github.com/litescript/ls-horizons/internal/ephem"
 	"github.com/litescript/ls-horizons/internal/logging"
@@ -29,6 +30,7 @@ var (
 	watchInterval     time.Duration
 	snapshotPath      string
 	solarSnapshotPath string
+	starsPath         string
 	serveDir          string
 	miniSkyMode       bool
 	nowMode           bool
@@ -72,7 +74,8 @@ func main() {
 	flag.DurationVar(&watchInterval, "watch", 0, "Repeat fetch at interval (e.g., 30s)")
 	flag.StringVar(&snapshotPath, "snapshot-path", "", "Export DSN JSON snapshot to file (use - for stdout)")
 	flag.StringVar(&solarSnapshotPath, "solar-snapshot-path", "", "Export solar system JSON (heliocentric positions) to file (use - for stdout)")
-	flag.StringVar(&serveDir, "serve-dir", "", "Write dsn.json and solarsystem.json into a directory for a web server to serve")
+	flag.StringVar(&starsPath, "stars-path", "", "Export the static star catalog JSON to file (use - for stdout)")
+	flag.StringVar(&serveDir, "serve-dir", "", "Write dsn.json, solarsystem.json, and stars.json into a directory for a web server to serve")
 	flag.BoolVar(&miniSkyMode, "mini-sky", false, "Show ASCII mini sky view")
 	flag.BoolVar(&nowMode, "now", false, "Single-line now-playing mode")
 	flag.StringVar(&scName, "sc", "", "Show card for specific spacecraft")
@@ -132,8 +135,28 @@ func main() {
 	fetcher := dsn.NewFetcher()
 
 	// Headless mode: no TUI
+	//
+	// --stars-path is deliberately absent from this expression. The star
+	// catalog is embedded, so exporting it needs neither a DSN fetch nor the
+	// poll loop; routing it through runHeadless would make a purely local
+	// operation depend on the network being up.
 	headless := summaryMode || snapshotPath != "" || solarSnapshotPath != "" || serveDir != "" ||
 		miniSkyMode || nowMode || scName != "" || diffMode || eventsMode
+
+	// Publish the star catalog before anything else can fail. It is static, so
+	// it is written exactly once regardless of --watch.
+	if starsPath != "" {
+		stars := astro.ExportStars(astro.DefaultStarCatalog())
+		if err := writeJSONTarget(starsPath, stars.WriteJSON); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		// Asked for nothing but the stars: done, without starting the TUI.
+		if !headless {
+			return
+		}
+	}
+
 	if headless {
 		applyHeadlessDefaults(refreshWasSet())
 		runHeadless(ctx, fetcher, stateMgr, logger)
@@ -312,6 +335,17 @@ func applyHeadlessDefaults(refreshSet bool) {
 func runHeadless(ctx context.Context, fetcher *dsn.Fetcher, stateMgr *state.Manager, logger *logging.Logger) {
 	var prevData *dsn.DSNData
 	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+
+	// stars.json is published once, here, rather than from outputOnce. The
+	// catalog is embedded and immutable for the life of the process, so a
+	// --watch daemon that rewrote it every tick would republish identical
+	// bytes forever and needlessly churn the file a cache should hold onto.
+	if serveDir != "" {
+		if err := writeStarsFile(serveDir); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
 	outputOnce := func() error {
 		result := fetcher.Fetch(ctx)
