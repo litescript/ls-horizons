@@ -11,7 +11,7 @@ A terminal UI for visualizing NASA's Deep Space Network in real-time.
 - **Real-time DSN monitoring** — Live data from NASA's Deep Space Network XML feed
 - **Pass planning** — Computed visibility windows for all three DSN complexes using JPL Horizons ephemeris
 - **Elevation sparkline** — Real-time ±2h elevation trace with truecolor gradient in Mission view
-- **Real star catalog** — 150+ bright stars with accurate J2000 coordinates rendered in the sky view
+- **Real star catalog** — the full naked-eye sky (8,404 stars to magnitude 6.5, J2000) from the Yale Bright Star Catalogue, embedded and published as a static endpoint
 - **Astronomical projection** — Proper RA/Dec to Az/El conversion using GMST/LST calculations
 - **Local planetary ephemeris** — Planet positions propagated in-process from Keplerian orbital elements, accurate to a few arcminutes with no network dependency
 - **JPL Horizons integration** — Trajectory path arcs and geocentric RA/Dec for pass planning
@@ -175,11 +175,14 @@ ls-horizons --snapshot-path -
 
 # Export solar system positions (heliocentric, for 3D consumers)
 ls-horizons --solar-snapshot-path solarsystem.json
+
+# Export the star catalog (static; needs no network)
+ls-horizons --stars-path stars.json
 ```
 
 ### Data endpoints
 
-`--serve-dir` writes both JSON payloads into a directory for a web server to
+`--serve-dir` writes the JSON payloads into a directory for a web server to
 serve as static files. Writes are atomic, so a reader never sees a partial file.
 
 ```bash
@@ -190,25 +193,125 @@ ls-horizons --serve-dir /var/lib/ls-horizons/web
 ls-horizons --serve-dir /var/lib/ls-horizons/web --watch 60s
 ```
 
-This produces two files:
+This produces three files:
 
-| File | Contents |
-|------|----------|
-| `dsn.json` | Stations, antennas, active links, per-complex load |
-| `solarsystem.json` | Heliocentric positions for the Sun, planets, and range-resolved spacecraft |
+| File | Contents | Refreshes |
+|------|----------|-----------|
+| `dsn.json` | Stations, antennas, active links, per-complex load | Every poll |
+| `solarsystem.json` | Heliocentric positions for the Sun, planets, and range-resolved spacecraft | Every poll |
+| `stars.json` | The naked-eye star catalog as celestial-sphere directions | Never |
 
 `solarsystem.json` uses **J2000 heliocentric ecliptic coordinates in AU** with the
-Sun at the origin and the ecliptic as the XY plane, so the coordinates drop
-straight into a 3D scene without any frame conversion. Each body reports whether
-its position came from local orbital propagation or live DSN tracking.
+Sun at the origin and the ecliptic as the XY plane — no astronomical frame
+conversion needed, only whatever basis change your renderer's own axis
+convention calls for. Each body reports whether its position came from local
+orbital propagation or live DSN tracking.
 
 Note that a spacecraft only appears in `solarsystem.json` when the DSN feed
 publishes a ranging solution for it. The feed often reports `-1` across every
 target at once, in which case the payload contains the Sun and planets only.
 Consumers should tolerate an empty spacecraft list.
 
+#### `stars.json`
+
+A static catalog of the naked-eye sky, for clients that want a real starfield
+rather than procedural noise.
+
+| Property | Value |
+|---|---|
+| Source | Bright Star Catalogue, 5th Revised Ed. (Hoffleit & Warren, 1991), VizieR `V/50` |
+| Selection | Apparent visual magnitude ≤ 6.5 |
+| Count | 8,404 stars |
+| Epoch and equinox | J2000 |
+| Size | ~3 MB, ~450 KB gzipped |
+
+The catalog is compiled into the binary. Publishing it contacts nothing, and it
+is written **once at startup** rather than on every poll, even under `--watch` —
+so it is safe to serve with a very long `max-age`. Two runs of the same binary
+produce byte-identical output, so the payload carries no timestamp and its ETag
+survives a restart.
+
+Each star carries its J2000 right ascension and declination *and* the same
+direction precomputed as unit vectors in two frames:
+
+- `equatorial` — right-handed, `+X` toward the vernal equinox, `+Z` toward the
+  north celestial pole.
+- `ecliptic` — right-handed, sharing `+X` with the equatorial frame, `+Z`
+  toward the north ecliptic pole. This is the frame `solarsystem.json` uses, so
+  the same one transformation places the stars and the planets consistently.
+
+Those are the published frames, and they are the standard astronomical ones.
+Mapping either onto a particular engine's axes — three.js's Y-up scene, say — is
+a consumer-side basis transformation, not part of what ls-horizons defines;
+[deploy/README.md](deploy/README.md) works one through as an example.
+
+**These are directions, not positions.** The vectors are unit length and carry
+no distance, deliberately: this is a celestial-sphere catalog, not a local map
+of stellar neighbourhoods. Scale them to whatever shell radius your scene wants.
+Real stellar distances would put every one of them far outside any scene you
+would build around the solar system, and rendering them at true scale would
+leave you with an empty box.
+
+Colour is published as raw `bv`, the B−V colour index, and as `spectral_type`.
+It is deliberately **not** pre-converted to RGB: mapping colour index to a
+display colour depends on your renderer's colour space, exposure, and how much
+saturation you want, and baking one answer into the data would freeze a
+presentation choice in a format that has to outlive it. `bv` is `null` for the
+3% of stars with no published photometry — a real value, since B−V of exactly
+0.00 is an A0 star like Vega.
+
+Names are optional and are omitted rather than invented. Only 141 stars carry a
+proper `name`; most have a Bayer/Flamsteed `designation` instead, and every star
+has a `catalog_id` such as `HR 2491`. Records are sorted brightest first, so a
+client that wants a lighter payload can simply stop reading early.
+
+```json
+{
+  "schema": "ls-horizons/stars",
+  "schema_version": "1.0",
+  "generator": "ls-horizons/0.12.0",
+  "epoch": "J2000",
+  "frames": {
+    "equatorial": "equatorial-J2000",
+    "ecliptic": "ecliptic-J2000"
+  },
+  "magnitude_limit": 6.5,
+  "count": 8404,
+  "source": {
+    "catalog": "Bright Star Catalogue, 5th Revised Ed. (Preliminary Version)",
+    "reference": "Hoffleit D., Warren Jr W.H., Astronomical Data Center, NSSDC/ADC (1991)",
+    "id": "VizieR V/50",
+    "url": "https://cdsarc.cds.unistra.fr/ftp/V/50/"
+  },
+  "stars": [
+    {
+      "name": "Sirius",
+      "catalog_id": "HR 2491",
+      "designation": "9Alp CMa",
+      "ra_deg": 101.28708,
+      "dec_deg": -16.71611,
+      "mag": -1.46,
+      "bv": 0,
+      "spectral_type": "A1Vm",
+      "equatorial": { "x": -0.187454, "y": 0.939218, "z": -0.28763 },
+      "ecliptic":   { "x": -0.187454, "y": 0.747303, "z": -0.637495 }
+    }
+  ]
+}
+```
+
+`schema_version` is independent of the one `dsn.json` and `solarsystem.json`
+carry. Those track a live upstream feed; this describes a frozen catalog, and
+tying them together would force version bumps on payloads that had not changed.
+Check it the same way: refuse a major version you do not understand.
+
+`name`, `designation`, `spectral_type`, and `catalog_id` are omitted when absent
+rather than emitted empty. `bv` is the exception — it is always present, and
+`null` when the catalog has no photometry, because B−V of exactly `0` is a real
+measurement and must not be confused with a missing one.
+
 See [deploy/README.md](deploy/README.md) for a systemd unit, a Caddy config, and
-the full setup.
+a three.js consumption example.
 
 ### All Flags
 
@@ -226,7 +329,8 @@ the full setup.
 | `--watch` | `0` | Repeat output at interval (floored at 10s with `--serve-dir`) |
 | `--snapshot-path` | `""` | Export DSN JSON to file (`-` for stdout) |
 | `--solar-snapshot-path` | `""` | Export solar system JSON to file (`-` for stdout) |
-| `--serve-dir` | `""` | Write `dsn.json` and `solarsystem.json` into a directory |
+| `--stars-path` | `""` | Export the static star catalog JSON to file (`-` for stdout). Needs no network |
+| `--serve-dir` | `""` | Write `dsn.json`, `solarsystem.json`, and `stars.json` into a directory |
 | `--log-level` | `info` | Log level (debug, info, warn, error) |
 | `-l`, `--log-file` | `""` | Write logs to file (e.g., `~/ls-horizons.log`) |
 
@@ -272,9 +376,22 @@ the single heaviest demand this app placed on a live NASA computation service,
 for bodies that move imperceptibly between refreshes. Computing them locally
 costs microseconds, needs no network, and makes the Orbit view work offline.
 
-### Yale Bright Star Catalog
+### Yale Bright Star Catalogue
 
-Star positions sourced from the Yale Bright Star Catalog and IAU star names. The sky view renders 150+ stars down to magnitude ~4.5, with brightness-based rendering (brighter stars get larger glyphs).
+Star positions, magnitudes, colour indices, and spectral types come from the
+Bright Star Catalogue, 5th Revised Ed. (Hoffleit & Warren, 1991), published by
+the Astronomical Data Center at NASA Goddard and distributed as VizieR
+catalogue [`V/50`](https://cdsarc.cds.unistra.fr/ftp/V/50/). The catalog asserts
+no copyright; NASA's open data catalog lists it as a US Government work. It is
+cited here and in `THIRD-PARTY-NOTICES` because attribution is owed, not
+because a licence compels it.
+
+The full magnitude 6.5 selection is embedded in the binary and published as
+`stars.json`. The terminal views draw a magnitude 3.0 subset — 174 stars, which
+is about as much as an ASCII grid can resolve — with brightness-based glyphs.
+Proper names come from a small curated layer cross-matched onto the catalog by
+position; stars without one are labelled by Bayer/Flamsteed designation or left
+unlabelled rather than given an invented name.
 
 ## Being a good citizen
 
@@ -330,7 +447,9 @@ internal/
 │   ├── planets.go      Keplerian planet propagation (local ephemeris)
 │   ├── visibility.go   Ground station visibility calculations
 │   ├── sun.go          Sun position calculations
-│   └── stars.go        Star catalog with 150+ bright stars
+│   ├── stars.go        Embedded star catalog (Bright Star Catalogue, mag <= 6.5)
+│   ├── export_stars.go Static stars.json export
+│   └── data/           Generated catalog table
 ├── dsn/
 │   ├── models.go       Data structures (Station, Antenna, Link, etc.)
 │   ├── parser.go       XML feed parsing
@@ -376,6 +495,7 @@ A play on the Unix `ls` command — this tool lets you "list" what's happening a
 
 ## Changelog
 
+- **0.12.0** — New `stars.json` data endpoint publishing the naked-eye sky as a static payload for 3D clients: 8,404 stars to magnitude 6.5, each with J2000 RA/Dec, precomputed unit vectors in the equatorial and ecliptic frames, B−V colour index, and spectral type. The built-in star catalog is now imported from the Yale Bright Star Catalogue rather than maintained by hand, correcting duplicated and mispositioned entries the old table carried, and the sky views draw from the same source. Added `--stars-path` for a one-shot export; `--serve-dir` now publishes `stars.json` alongside the other two, written once at startup and adding no upstream traffic
 - **0.11.1** — Fixed the Linux release binary, which was dynamically linked against a recent glibc and would not start on distributions shipping anything older than glibc 2.34 (Debian 11, Ubuntu 20.04, and similar). It is statically linked again, as documented. Only the Linux download was affected
 - **0.11.0** — Relicensed from MIT to Apache-2.0 (adds an explicit patent grant and a `NOTICE` attribution mechanism; earlier releases remain MIT). Added `THIRD-PARTY-NOTICES` reproducing the license texts of every dependency statically linked into the release binaries, and release archives now ship `LICENSE` and `NOTICE` alongside the binary
 - **0.10.0** — Solar system JSON endpoint with heliocentric positions for external consumers, `--serve-dir` to publish data endpoints for a web server, planet positions computed locally so the Orbit view no longer depends on network availability, and far lighter traffic against NASA and JPL. **Removed:** the in-app update check and installer, which relied on `go install` and so never worked for anyone running a pre-built binary. **Breaking:** JSON exports now carry `schema_version`, `complex_loads` keys are snake_case, and unknown range/light-time is `null` rather than `-1`
@@ -425,9 +545,14 @@ full license texts are reproduced in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES),
 which is included with every release. Regenerate it with `scripts/gen-notices.sh`
 after changing dependencies.
 
+The binary also embeds a processed subset of the Bright Star Catalogue, which is
+credited in the same file and in [NOTICE](NOTICE). Unlike the DSN and Horizons
+feeds, which are fetched at runtime, this data is redistributed inside the
+binary, so the attribution travels with every copy.
+
 ## Acknowledgments
 
 - NASA/JPL for the public DSN data feed and Horizons ephemeris system
-- Yale Bright Star Catalog for star position data
+- Dorrit Hoffleit and Wayne H. Warren Jr. for the Bright Star Catalogue (Astronomical Data Center, NSSDC/ADC, 1991), the source of every star this renders
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the excellent TUI framework
 - [Lip Gloss](https://github.com/charmbracelet/lipgloss) for terminal styling

@@ -1,6 +1,6 @@
 # ls-horizons data endpoints for a browser client (Three.js scene, dashboard, etc).
 #
-# Nothing is proxied to ls-horizons -- it has no HTTP server. It writes two JSON
+# Nothing is proxied to ls-horizons -- it has no HTTP server. It writes its JSON
 # files on a timer and Caddy serves them as static content. That separation is
 # deliberate: the number of people visiting the site has no effect whatsoever on
 # how often NASA and JPL are contacted. Traffic to these endpoints is served
@@ -21,6 +21,12 @@ horizons.example.com {
 		header Access-Control-Allow-Origin "*"
 		header X-Content-Type-Options "nosniff"
 
+		# stars.json is the exception: a star catalog from 1991, compiled into
+		# the binary and written once at startup. It is byte-identical across
+		# restarts, so there is nothing to revalidate. Cache it for a year.
+		@stars path /stars.json
+		header @stars Cache-Control "public, max-age=31536000, immutable"
+
 		file_server
 	}
 
@@ -35,9 +41,10 @@ horizons.example.com {
 # Resulting endpoints:
 #   https://horizons.example.com/api/dsn.json
 #   https://horizons.example.com/api/solarsystem.json
+#   https://horizons.example.com/api/stars.json
 #
-# Both are written atomically (temp file + rename), so Caddy can never catch one
-# mid-write and serve a truncated body.
+# All three are written atomically (temp file + rename), so Caddy can never catch
+# one mid-write and serve a truncated body.
 #
 # Note on CORS: Access-Control-Allow-Origin is set here because this is *your*
 # derived data on *your* origin. Do not reverse-proxy JPL Horizons to work around

@@ -11,15 +11,18 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/litescript/ls-horizons/internal/astro"
 	"github.com/litescript/ls-horizons/internal/dsn"
 )
 
-// Filenames written into the serve directory. These are the two endpoints a web
+// Filenames written into the serve directory. These are the endpoints a web
 // consumer fetches; they refresh independently because they answer different
-// questions and age at very different rates.
+// questions and age at very different rates. dsn.json turns over every poll,
+// solarsystem.json drifts slowly, and stars.json never changes at all.
 const (
 	dsnEndpointFile         = "dsn.json"
 	solarSystemEndpointFile = "solarsystem.json"
+	starsEndpointFile       = "stars.json"
 )
 
 // pollJitterFraction is how much each wait is randomly stretched, as a fraction
@@ -85,7 +88,27 @@ func atomicWriteFile(path string, write func(io.Writer) error) (err error) {
 	return nil
 }
 
-// writeServeFiles publishes both endpoint payloads into dir.
+// writeStarsFile publishes the static star catalog into dir.
+//
+// This is deliberately separate from writeServeFiles and is called once at
+// startup rather than on every poll. The catalog is compiled into the binary
+// and never changes while the process runs, so rewriting it each tick would
+// burn a few megabytes of disk writes an hour to republish identical bytes,
+// and would invalidate a cache entry that should live forever.
+//
+// It contacts nothing. The star data is embedded, so publishing it adds no
+// NASA or JPL traffic whatsoever.
+func writeStarsFile(dir string) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create serve directory %s: %w", dir, err)
+	}
+
+	stars := astro.ExportStars(astro.DefaultStarCatalog())
+	return atomicWriteFile(filepath.Join(dir, starsEndpointFile), stars.WriteJSON)
+}
+
+// writeServeFiles publishes the two time-varying endpoint payloads into dir.
+// stars.json is not written here; see writeStarsFile.
 func writeServeFiles(dir string, data *dsn.DSNData, fetchedAt time.Time) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create serve directory %s: %w", dir, err)
