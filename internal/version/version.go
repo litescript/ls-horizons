@@ -5,7 +5,7 @@
 package version
 
 // Version is the current application version.
-const Version = "0.11.1"
+const Version = "0.12.0"
 
 // ProjectURL is the canonical home of this project, included in the User-Agent
 // so upstream data providers can identify and contact the operator of a client.
@@ -20,6 +20,7 @@ func UserAgent() string {
 }
 
 // Milestones:
+// 0.12.0 - Star catalog JSON endpoint, full naked-eye sky imported from the Bright Star Catalogue
 // 0.11.1 - Restore static linking of the linux release binary
 // 0.11.0 - Relicense to Apache-2.0, third-party attribution notices
 // 0.10.0 - Solar system JSON endpoint, --serve-dir publishing, locally computed planet positions
