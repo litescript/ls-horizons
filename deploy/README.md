@@ -37,10 +37,26 @@ for (const body of data.bodies) {
   mesh(body.code).position.set(
     body.position.x * AU,
     body.position.z * AU,  // three.js is Y-up; ecliptic Z becomes scene Y
-    body.position.y * AU,
+   -body.position.y * AU,  // negated, see "Axis convention" below
   );
 }
 ```
+
+### Axis convention
+
+The payload uses a right-handed J2000 ecliptic frame: `+X` toward the vernal
+equinox, `+Z` toward the north ecliptic pole. three.js is also right-handed but
+Y-up, so the mapping is:
+
+```
+scene.x =  ecliptic.x
+scene.y =  ecliptic.z
+scene.z = -ecliptic.y
+```
+
+The negation is not cosmetic. Mapping straight to `(x, z, y)` swaps two axes,
+which flips the handedness and renders the whole scene mirror-imaged, with the
+planets orbiting backwards.
 
 Each body carries a `source` field: `keplerian` for locally propagated planetary
 orbits, `dsn` for live-tracked spacecraft, `static` for the Sun.
