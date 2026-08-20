@@ -1,6 +1,6 @@
 # Deploying ls-horizons as a data endpoint
 
-`ls-horizons` has no HTTP server. In serve mode it writes two JSON files on a
+`ls-horizons` has no HTTP server. In serve mode it writes JSON files on a
 timer; a web server hands those files to browsers. The whole design turns on one
 property:
 
@@ -13,12 +13,13 @@ good intentions.
 
 ---
 
-## The two endpoints
+## The three endpoints
 
 | File | Contents | Changes |
 |---|---|---|
 | `dsn.json` | Live Deep Space Network state: stations, antennas, active links, per-complex load | Every poll |
 | `solarsystem.json` | Heliocentric positions for the Sun, eight planets, and any range-resolved spacecraft | Continuously, but slowly |
+| `stars.json` | The naked-eye star catalog as celestial-sphere directions | Never |
 
 `solarsystem.json` uses **J2000 heliocentric ecliptic coordinates in AU**. The Sun
 is at the origin and the ecliptic is the XY plane, so the coordinates drop
@@ -44,7 +45,7 @@ for (const body of data.bodies) {
 
 ### Axis convention
 
-The payload uses a right-handed J2000 ecliptic frame: `+X` toward the vernal
+Both payloads use a right-handed J2000 ecliptic frame: `+X` toward the vernal
 equinox, `+Z` toward the north ecliptic pole. three.js is also right-handed but
 Y-up, so the mapping is:
 
@@ -55,8 +56,10 @@ scene.z = -ecliptic.y
 ```
 
 The negation is not cosmetic. Mapping straight to `(x, z, y)` swaps two axes,
-which flips the handedness and renders the whole scene mirror-imaged, with the
-planets orbiting backwards.
+which flips the handedness and renders the whole scene mirror-imaged: orbits run
+backwards and, once you add `stars.json`, every constellation comes out
+reversed. Use the same mapping for both payloads — mixing conventions puts the
+planets and the sky in different universes.
 
 Each body carries a `source` field: `keplerian` for locally propagated planetary
 orbits, `dsn` for live-tracked spacecraft, `static` for the Sun.
@@ -70,6 +73,111 @@ planets only, and `dsn.json` reports `null` for `distance_km` and `rtlt_seconds`
 
 This is upstream data availability, not a fault in the pipeline. Build the scene
 to tolerate an empty spacecraft list rather than assuming one.
+
+## Stars are static
+
+`stars.json` is the odd one out. It holds 8,404 stars down to apparent visual
+magnitude 6.5 — the naked-eye sky — from the Bright Star Catalogue, 5th Revised
+Ed. (Hoffleit & Warren, 1991), and it **never changes**. The catalog is compiled
+into the binary, so publishing it contacts nothing, and `--serve-dir` writes it
+once at startup rather than on every poll even under `--watch`. Two runs of the
+same binary emit identical bytes.
+
+That makes it safe to cache hard:
+
+```
+@stars path /api/stars.json
+header @stars Cache-Control "public, max-age=31536000, immutable"
+```
+
+Each record carries `ra_deg` and `dec_deg` for J2000, plus the same direction
+precomputed as unit vectors in the `equatorial` and `ecliptic` frames. Use
+`ecliptic` and the mapping above and the sky lines up with the planets.
+
+**The vectors carry no distance.** They are unit length: this is a catalog of
+directions on the celestial sphere, not a 3D map of where stars actually are.
+Multiply by whatever shell radius your scene wants — far enough out that it
+reads as a backdrop, near enough to stay inside your camera's far plane.
+
+Colour is the raw B−V index in `bv`, not RGB, so the choice of how saturated a
+sky you want stays yours. It is `null` for the 3% of stars with no published
+photometry.
+
+```js
+const res  = await fetch('/api/stars.json');
+const data = await res.json();
+
+if (!data.schema_version.startsWith('1.')) {
+  throw new Error(`unsupported schema ${data.schema_version}`);
+}
+
+const R = 5000; // celestial sphere radius, in scene units
+const positions = new Float32Array(data.count * 3);
+const colors    = new Float32Array(data.count * 3);
+const sizes     = new Float32Array(data.count);
+
+data.stars.forEach((s, i) => {
+  // Ecliptic (right-handed, Z to the north ecliptic pole) -> three.js Y-up.
+  positions[i * 3 + 0] =  s.ecliptic.x * R;
+  positions[i * 3 + 1] =  s.ecliptic.z * R;
+  positions[i * 3 + 2] = -s.ecliptic.y * R;
+
+  const c = colorFromBV(s.bv);
+  colors[i * 3 + 0] = c.r;
+  colors[i * 3 + 1] = c.g;
+  colors[i * 3 + 2] = c.b;
+
+  // Magnitude is logarithmic and inverted: every 5 magnitudes is a factor of
+  // 100 in flux. Rendering that linearly makes Sirius a dinner plate, so this
+  // is a deliberately compressed curve, not photometry.
+  sizes[i] = Math.max(0.6, 7 - s.mag);
+});
+
+const geometry = new THREE.BufferGeometry();
+geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+geometry.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
+geometry.setAttribute('size',     new THREE.BufferAttribute(sizes, 1));
+
+scene.add(new THREE.Points(geometry, new THREE.PointsMaterial({
+  vertexColors: true,
+  sizeAttenuation: false,
+  depthWrite: false,
+})));
+```
+
+### Turning B−V into a colour
+
+B−V is a temperature measurement, so the conversion goes through the star's
+effective temperature. Ballesteros' formula gives it in one step, and a
+blackbody approximation turns that into RGB. Stars with no photometry fall back
+to white, which is what the eye sees for anything faint anyway.
+
+```js
+function colorFromBV(bv) {
+  if (bv === null) return { r: 1, g: 1, b: 1 };
+
+  // Ballesteros (2012): B-V to effective temperature in kelvin.
+  const t = 4600 * (1 / (0.92 * bv + 1.7) + 1 / (0.92 * bv + 0.62));
+
+  // Compact blackbody approximation, valid over the stellar range.
+  const k = Math.min(40000, Math.max(1000, t)) / 100;
+  const ch = (v) => Math.min(1, Math.max(0, v / 255));
+
+  const r = k <= 66 ? 255 : 329.7 * Math.pow(k - 60, -0.1332);
+  const g = k <= 66 ? 99.47 * Math.log(k) - 161.1
+                    : 288.1 * Math.pow(k - 60, -0.0755);
+  const b = k >= 66 ? 255
+          : k <= 19 ? 0
+          : 138.5 * Math.log(k - 10) - 305.0;
+
+  return { r: ch(r), g: ch(g), b: ch(b) };
+}
+```
+
+Real starlight is far less saturated than this suggests — the eye sees almost
+all of these as white. Desaturate toward white if the scene looks like a bag of
+sweets; that is a presentation choice, which is exactly why the payload ships
+B−V rather than making it for you.
 
 ---
 
@@ -102,6 +210,7 @@ ownership automatically. Confirm it is publishing:
 systemctl status ls-horizons-snapshot
 ls -la /var/lib/ls-horizons/web/
 jq '.generator, .fetched_at, (.links | length)' /var/lib/ls-horizons/web/dsn.json
+jq '.schema, .count, .magnitude_limit' /var/lib/ls-horizons/web/stars.json
 ```
 
 Then point Caddy at that directory using `deploy/Caddyfile.example`.
