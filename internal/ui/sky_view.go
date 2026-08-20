@@ -143,7 +143,7 @@ func NewSkyViewModel() SkyViewModel {
 		pathMode:        PathOff,      // paths off by default until provider is set
 		visibilityMode:  VisibilityOff,
 		visibilityCache: dsn.NewVisibilityCache(),
-		starCatalog:     astro.DefaultStarCatalog(),
+		starCatalog:     astro.TUIStarCatalog(),
 	}
 }
 

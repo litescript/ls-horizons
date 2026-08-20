@@ -134,6 +134,11 @@ type StarRecord struct {
 	// file by something more durable than array position.
 	CatalogID string `json:"catalog_id,omitempty"`
 
+	// Designation is the Bayer/Flamsteed designation, present for most
+	// naked-eye stars even though few have a proper name. It gives a client
+	// something real to label a star with instead of inventing one.
+	Designation string `json:"designation,omitempty"`
+
 	RAdeg  float64 `json:"ra_deg"`
 	DecDeg float64 `json:"dec_deg"`
 
@@ -192,6 +197,7 @@ func exportStar(s Star) StarRecord {
 	rec := StarRecord{
 		Name:         s.Name,
 		CatalogID:    s.CatalogID,
+		Designation:  s.Designation,
 		RAdeg:        round(s.RAdeg, raDecDecimals),
 		DecDeg:       round(s.DecDeg, raDecDecimals),
 		Mag:          round(s.Mag, magDecimals),

@@ -414,7 +414,7 @@ func (m SolarSystemModel) drawStarfield(grid [][]rune, cx, cy int, displayScale 
 	w := len(grid[0])
 
 	// Get the bright star catalog
-	catalog := astro.DefaultStarCatalog()
+	catalog := astro.TUIStarCatalog()
 
 	// Adaptive shell radius: scale inversely with zoom so stars stay
 	// at the edge of the viewport regardless of zoom level.
